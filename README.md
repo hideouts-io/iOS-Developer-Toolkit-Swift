@@ -1,7 +1,7 @@
 # iOS Developer Toolkit (Swift)
 
 <p align="center">
-  <img src="App/iOSDeveloperToolkit/Assets.xcassets/Logo.imageset/logo.png" width="200" alt="iOS Developer Toolkit logo">
+  <img src="App/iOSDeveloperToolkit/Assets.xcassets/Logo.imageset/logo.png" width="200" alt="iOS Developer Toolkit (Swift) logo">
 </p>
 
 **A native macOS app for working with iPhones, iPads, and simulators — device information, live logs, location simulation, app installs, backups, packet capture, readiness checks, and documented evidence collection.**

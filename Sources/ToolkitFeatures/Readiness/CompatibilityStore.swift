@@ -38,11 +38,11 @@ public struct CompatibilityObservation: Codable, Sendable, Hashable, Identifiabl
     }
 }
 
-/// Append-only local history at ~/Library/Application Support/iOS Developer Toolkit/Compatibility.
+/// Append-only local history at ~/Library/Application Support/<app name>/Compatibility.
 public struct CompatibilityStore: Sendable {
     public let url: URL
 
-    public init(url: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/iOS Developer Toolkit/Compatibility/observations-v2.jsonl")) {
+    public init(url: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/\(ToolkitVersion.applicationName)/Compatibility/observations-v2.jsonl")) {
         self.url = url
     }
 
@@ -101,7 +101,7 @@ public struct CompatibilityStore: Sendable {
         var lines = [
             "# Real-device readiness report",
             "",
-            "Generated \(ISO8601.string(Date())) by iOS Developer Toolkit \(ToolkitVersion.current). Observed results only; untested devices and builds are not predicted. Names, identifiers, and fingerprints are omitted.",
+            "Generated \(ISO8601.string(Date())) by \(ToolkitVersion.applicationName) \(ToolkitVersion.current). Observed results only; untested devices and builds are not predicted. Names, identifiers, and fingerprints are omitted.",
             "",
             "| Model | iOS | Build | Connection | " + rows.map(\.title).joined(separator: " | ") + " |",
             "|" + String(repeating: "---|", count: 4 + rows.count),

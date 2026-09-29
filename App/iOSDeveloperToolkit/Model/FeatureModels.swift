@@ -177,7 +177,7 @@ final class InstallModel {
 @Observable
 @MainActor
 final class BackupModel {
-    var destination = URL.documents.appendingPathComponent("iOS Developer Toolkit Backups")
+    var destination = URL.documents.appendingPathComponent("\(ToolkitVersion.applicationName) Backups")
     var forceFullBackup = false
     var requireEncryption = true
     var encryptionEnabled: Bool?
@@ -265,7 +265,7 @@ final class BackupModel {
 @Observable
 @MainActor
 final class EvidenceModel {
-    var outputRoot = URL.documents.appendingPathComponent("iOS Developer Toolkit Cases")
+    var outputRoot = URL.documents.appendingPathComponent("\(ToolkitVersion.applicationName) Cases")
     var options = CollectionOptions()
     var caseTitle = ""
     var casePurpose = ""

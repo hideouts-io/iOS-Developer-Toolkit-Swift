@@ -53,8 +53,8 @@ jobs:
         run: |
           sha256sum -c SHA256SUMS.txt
           version="${GITHUB_REF_NAME#v}"
-          zip="release-assets/iOS-Developer-Toolkit-$version-macOS-universal.zip"
-          sbom="release-assets/iOS-Developer-Toolkit-$version.spdx.json"
+          zip="release-assets/iOS-Developer-Toolkit-Swift-$version-macOS-universal.zip"
+          sbom="release-assets/iOS-Developer-Toolkit-Swift-$version.spdx.json"
           test -f "../$zip" && test -f "../$sbom"
           echo "zip=$zip" >> "$GITHUB_OUTPUT"
           echo "sbom=$sbom" >> "$GITHUB_OUTPUT"

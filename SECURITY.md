@@ -10,7 +10,7 @@
 
 ## Report a vulnerability privately
 
-Use [GitHub private vulnerability reporting](https://github.com/hideouts-io/iOS-Developer-Toolkit/security/advisories/new).
+Use [GitHub private vulnerability reporting](https://github.com/hideouts-io/iOS-Developer-Toolkit-Swift/security/advisories/new).
 Do not disclose a suspected vulnerability in a public issue, discussion, pull request, log,
 screenshot, or evidence archive.
 

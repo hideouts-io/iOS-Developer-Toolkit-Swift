@@ -8,7 +8,7 @@ struct IOSDeveloperToolkitApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
-        WindowGroup("iOS Developer Toolkit", id: "main") {
+        WindowGroup(ToolkitVersion.applicationName, id: "main") {
             ContentView()
                 .environment(model)
                 .frame(minWidth: 900, minHeight: 560)

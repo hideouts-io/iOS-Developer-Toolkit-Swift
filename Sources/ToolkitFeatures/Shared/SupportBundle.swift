@@ -32,7 +32,7 @@ public struct SupportBundleContext: Sendable {
 /// Builds a local, reviewable ZIP for bug reports. Nothing is uploaded.
 public enum SupportBundle {
     public static let readme = """
-    iOS Developer Toolkit sanitized support bundle
+    iOS Developer Toolkit (Swift) sanitized support bundle
 
     This archive was generated locally and is never uploaded by the application. It contains app and
     macOS version information, aggregate readiness states, sanitized status summaries, the toolchain

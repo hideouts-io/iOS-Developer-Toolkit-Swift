@@ -73,7 +73,7 @@ var packages: [[String: Any]] = [[
     "SPDXID": appID,
     "name": "iOS Developer Toolkit",
     "versionInfo": version,
-    "downloadLocation": "git+https://github.com/hideouts-io/iOS-Developer-Toolkit.git@\(commit)",
+    "downloadLocation": "git+https://github.com/hideouts-io/iOS-Developer-Toolkit-Swift.git@\(commit)",
     "licenseConcluded": "MIT",
     "licenseDeclared": "MIT",
     "copyrightText": "Copyright (c) 2026 hideouts-io",
@@ -114,7 +114,7 @@ let document: [String: Any] = [
     "dataLicense": "CC0-1.0",
     "SPDXID": "SPDXRef-DOCUMENT",
     "name": "iOS-Developer-Toolkit-\(version)",
-    "documentNamespace": "https://github.com/hideouts-io/iOS-Developer-Toolkit/spdx/\(version)/\(commit)",
+    "documentNamespace": "https://github.com/hideouts-io/iOS-Developer-Toolkit-Swift/spdx/\(version)/\(commit)",
     "creationInfo": [
         "created": formatter.string(from: Date()),
         "creators": ["Tool: scripts/generate-sbom.swift", "Organization: hideouts-io"],

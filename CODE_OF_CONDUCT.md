@@ -36,7 +36,7 @@ This Code of Conduct applies within project spaces and when an individual offici
 
 ## Enforcement
 
-Report abusive, harassing, or otherwise unacceptable behavior privately through the repository's [private report form](https://github.com/hideouts-io/iOS-Developer-Toolkit/security/advisories/new) and begin the summary with `Code of Conduct`. Reports will be reviewed by the project maintainer. The maintainer will respect the reporter's privacy and safety.
+Report abusive, harassing, or otherwise unacceptable behavior privately through the repository's [private report form](https://github.com/hideouts-io/iOS-Developer-Toolkit-Swift/security/advisories/new) and begin the summary with `Code of Conduct`. Reports will be reviewed by the project maintainer. The maintainer will respect the reporter's privacy and safety.
 
 Enforcement may include a private warning, removal of content, a temporary participation restriction, or a permanent ban, depending on impact and pattern of behavior.
 

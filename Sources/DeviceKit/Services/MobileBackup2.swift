@@ -125,7 +125,7 @@ public enum MobileBackup2 {
             "GUID": .string(UUID().uuidString.replacingOccurrences(of: "-", with: "")),
             "Last Backup Date": .date(Date()),
             "iTunes Version": "12.13.0",
-            "Backup Tool": "iOS Developer Toolkit",
+            "Backup Tool": .string(ToolkitVersion.applicationName),
         ]
         let mapping = [
             "Device Name": "DeviceName", "Display Name": "DeviceName", "Product Type": "ProductType",

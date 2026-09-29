@@ -1,12 +1,12 @@
 # Source availability
 
 Every published release of iOS Developer Toolkit is built from a Git tag in
-[this public repository](https://github.com/hideouts-io/iOS-Developer-Toolkit) by the release
+[this public repository](https://github.com/hideouts-io/iOS-Developer-Toolkit-Swift) by the release
 workflow, with a GitHub build-provenance attestation that links the archive to that workflow run
 and commit. GitHub provides source archives for each tag, or:
 
 ```bash
-git clone --branch vVERSION --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit.git
+git clone --branch vVERSION --depth 1 https://github.com/hideouts-io/iOS-Developer-Toolkit-Swift.git
 ```
 
 The app is written in Swift. Its third-party dependencies are Swift packages resolved from their

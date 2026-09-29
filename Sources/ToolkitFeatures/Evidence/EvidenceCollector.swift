@@ -79,7 +79,7 @@ public enum CollectionOutcome: String, Codable, Sendable {
 
 public struct CollectionManifest: Codable, Sendable {
     public var schemaVersion = 2
-    public var application = "iOS Developer Toolkit"
+    public var application = ToolkitVersion.applicationName
     public var applicationVersion: String
     public var targetUDID: String
     public var targetName: String

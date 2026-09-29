@@ -60,7 +60,7 @@ public enum CaseWorkflow {
         let folder = try createCaseFolder(in: root, target: target, at: now)
         let document: [String: Any] = [
             "schema_version": 2,
-            "application": "iOS Developer Toolkit",
+            "application": ToolkitVersion.applicationName,
             "case": try JSONSerialization.jsonObject(with: JSONOutput.encode(intake)),
             "limitations": [
                 "The intake records the operator acknowledgement; it does not establish chain of custody.",

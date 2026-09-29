@@ -1,6 +1,6 @@
 # Support
 
-Use [GitHub Discussions](https://github.com/hideouts-io/iOS-Developer-Toolkit/discussions) for
+Use [GitHub Discussions](https://github.com/hideouts-io/iOS-Developer-Toolkit-Swift/discussions) for
 installation, pairing, Developer Mode, developer services, compatibility, and workflow questions.
 
 Before asking:

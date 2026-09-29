@@ -171,7 +171,7 @@ public enum LocationLab {
         formatter.formatOptions = [.withInternetDateTime]
         var lines = [
             #"<?xml version="1.0" encoding="UTF-8"?>"#,
-            #"<gpx version="1.1" creator="iOS Developer Toolkit" xmlns="http://www.topografix.com/GPX/1/1">"#,
+            #"<gpx version="1.1" creator="iOS Developer Toolkit (Swift)" xmlns="http://www.topografix.com/GPX/1/1">"#,
             "  <trk><name>Toolkit QA route</name><trkseg>",
         ]
         for (index, point) in points.enumerated() {
@@ -224,7 +224,7 @@ public enum LocationLab {
     // MARK: Saved locations (same JSON schema as earlier releases)
 
     public static func savedLocationsURL(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
-        home.appendingPathComponent("Library/Application Support/iOS Developer Toolkit/locations.json")
+        home.appendingPathComponent("Library/Application Support/\(ToolkitVersion.applicationName)/locations.json")
     }
 
     public static func validateLocationName(_ name: String) throws -> String {

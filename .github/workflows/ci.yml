@@ -83,7 +83,7 @@ jobs:
       - name: Render every page at the default and minimum window sizes
         run: |
           scripts/check-layout.sh \
-            "$RUNNER_TEMP/dd/Build/Products/Debug/iOS Developer Toolkit.app/Contents/MacOS/iOS Developer Toolkit" \
+            "$RUNNER_TEMP/dd/Build/Products/Debug/iOS Developer Toolkit (Swift).app/Contents/MacOS/iOS Developer Toolkit (Swift)" \
             "$RUNNER_TEMP/layout"
       - uses: actions/upload-artifact@v7
         if: always()

@@ -32,7 +32,7 @@ final class LocationModel {
     var lastSimulatedTarget: DeviceTarget?
     private var playbackTask: Task<Void, Never>?
 
-    let evidenceDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/iOS Developer Toolkit Location Logs")
+    let evidenceDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Documents/\(ToolkitVersion.applicationName) Location Logs")
 
     init() {
         // Screenshot mode shows sample places so personal saved places never appear in docs.

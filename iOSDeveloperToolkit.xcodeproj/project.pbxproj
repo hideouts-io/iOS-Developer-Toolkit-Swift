@@ -366,7 +366,7 @@
 				"ONLY_ACTIVE_ARCH[config=Debug]" = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = io.hideouts.iOSDeveloperToolkit;
 				PRODUCT_MODULE_NAME = iOSDeveloperToolkitApp;
-				PRODUCT_NAME = "iOS Developer Toolkit";
+				PRODUCT_NAME = "iOS Developer Toolkit (Swift)";
 				SDKROOT = macosx;
 				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
 			};
@@ -392,7 +392,7 @@
 				"ONLY_ACTIVE_ARCH[config=Debug]" = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = io.hideouts.iOSDeveloperToolkit;
 				PRODUCT_MODULE_NAME = iOSDeveloperToolkitApp;
-				PRODUCT_NAME = "iOS Developer Toolkit";
+				PRODUCT_NAME = "iOS Developer Toolkit (Swift)";
 				SDKROOT = macosx;
 				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
 			};

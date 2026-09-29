@@ -4,8 +4,8 @@ title: "iOS Developer Toolkit"
 type: software
 authors:
   - name: "hideouts-io"
-repository-code: "https://github.com/hideouts-io/iOS-Developer-Toolkit"
-url: "https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/latest"
+repository-code: "https://github.com/hideouts-io/iOS-Developer-Toolkit-Swift"
+url: "https://github.com/hideouts-io/iOS-Developer-Toolkit-Swift/releases/latest"
 license: MIT
 version: 1.0.0
 abstract: "A native Swift/SwiftUI macOS app for iPhone, iPad, and simulator development and diagnostics: device readiness, live Unified and classic logs, location simulation, app installation, encrypted backups, packet capture, and hashed evidence collection."

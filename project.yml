@@ -35,7 +35,7 @@ targets:
         product: ToolkitFeatures
     settings:
       base:
-        PRODUCT_NAME: iOS Developer Toolkit
+        PRODUCT_NAME: "iOS Developer Toolkit (Swift)"
         PRODUCT_MODULE_NAME: iOSDeveloperToolkitApp
         PRODUCT_BUNDLE_IDENTIFIER: io.hideouts.iOSDeveloperToolkit
         INFOPLIST_FILE: App/iOSDeveloperToolkit/Info.plist

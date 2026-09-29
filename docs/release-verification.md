@@ -7,9 +7,9 @@ a GitHub-hosted macOS runner:
 
 | File | Contents |
 |---|---|
-| `iOS-Developer-Toolkit-VERSION-macOS-universal.zip` | The app (arm64 + x86_64), ad-hoc signed with the hardened runtime, with `idt` in `Contents/MacOS` and dependency licenses in `Contents/Resources/Licenses` |
+| `iOS-Developer-Toolkit-Swift-VERSION-macOS-universal.zip` | The app (arm64 + x86_64), ad-hoc signed with the hardened runtime, with `idt` in `Contents/MacOS` and dependency licenses in `Contents/Resources/Licenses` |
 | `SHA256SUMS.txt` | SHA-256 of every release file |
-| `iOS-Developer-Toolkit-VERSION.spdx.json` | SPDX 2.3 SBOM of the Swift package dependencies, generated from `Package.resolved` |
+| `iOS-Developer-Toolkit-Swift-VERSION.spdx.json` | SPDX 2.3 SBOM of the Swift package dependencies, generated from `Package.resolved` |
 
 GitHub build-provenance and SBOM attestations are published for the ZIP. The app is **not**
 notarized by Apple.
@@ -18,15 +18,15 @@ notarized by Apple.
 
 ```bash
 shasum -a 256 -c SHA256SUMS.txt --ignore-missing
-gh attestation verify iOS-Developer-Toolkit-VERSION-macOS-universal.zip --repo hideouts-io/iOS-Developer-Toolkit
+gh attestation verify iOS-Developer-Toolkit-Swift-VERSION-macOS-universal.zip --repo hideouts-io/iOS-Developer-Toolkit-Swift
 ```
 
 After unzipping:
 
 ```bash
-codesign --verify --deep --strict --verbose=2 "iOS Developer Toolkit.app"
-codesign --display --verbose=2 "iOS Developer Toolkit.app"   # expect: Signature=adhoc, flags=0x10002(adhoc,runtime)
-lipo -archs "iOS Developer Toolkit.app/Contents/MacOS/iOS Developer Toolkit"   # expect: x86_64 arm64
+codesign --verify --deep --strict --verbose=2 "iOS Developer Toolkit (Swift).app"
+codesign --display --verbose=2 "iOS Developer Toolkit (Swift).app"   # expect: Signature=adhoc, flags=0x10002(adhoc,runtime)
+lipo -archs "iOS Developer Toolkit (Swift).app/Contents/MacOS/iOS Developer Toolkit (Swift)"   # expect: x86_64 arm64
 ```
 
 Then open the app with Control-click › **Open** (or **Open Anyway** in *System Settings › Privacy &

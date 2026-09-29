@@ -172,7 +172,7 @@ public actor LogCapture {
     private var closed = false
 
     public static func defaultDirectory(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
-        home.appendingPathComponent("Library/Caches/iOS Developer Toolkit/Live Logs")
+        home.appendingPathComponent("Library/Caches/\(ToolkitVersion.applicationName)/Live Logs")
     }
 
     public init(kind: LogStreamKind, target: DeviceTarget, directory: URL = LogCapture.defaultDirectory(), now: Date = Date()) throws {

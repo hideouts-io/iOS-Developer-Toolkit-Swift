@@ -22,7 +22,7 @@ questions, and private vulnerability reporting for security issues.
 Requirements: macOS 14 or later and Xcode 16 or later (Swift 6).
 
 ```bash
-git clone https://github.com/hideouts-io/iOS-Developer-Toolkit.git
+git clone https://github.com/hideouts-io/iOS-Developer-Toolkit-Swift.git
 cd iOS-Developer-Toolkit
 swift build
 swift test
@@ -71,7 +71,7 @@ Also, when relevant:
   automation) and render every page at the default and minimum sizes, as CI does:
 
   ```bash
-  scripts/check-layout.sh "…/iOS Developer Toolkit.app/Contents/MacOS/iOS Developer Toolkit" /tmp/layout
+  scripts/check-layout.sh "…/iOS Developer Toolkit (Swift).app/Contents/MacOS/iOS Developer Toolkit (Swift)" /tmp/layout
   ```
 
   It fails if any page is squeezed, overflows the window, or does not render; the PNGs are in

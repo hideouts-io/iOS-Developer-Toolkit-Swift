@@ -1,13 +1,13 @@
-# iOS Developer Toolkit
+# iOS Developer Toolkit (Swift)
 
 <p align="center">
-  <img src="App/iOSDeveloperToolkit/Assets.xcassets/Logo.imageset/logo.png" width="200" alt="iOS Developer Toolkit logo">
+  <img src="App/iOSDeveloperToolkit/Assets.xcassets/Logo.imageset/logo.png" width="200" alt="iOS Developer Toolkit (Swift) logo">
 </p>
 
 **A native macOS app for working with iPhones, iPads, and simulators — device information, live logs, location simulation, app installs, backups, packet capture, readiness checks, and documented evidence collection.**
 
-[![CI](https://github.com/hideouts-io/iOS-Developer-Toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/hideouts-io/iOS-Developer-Toolkit/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/hideouts-io/iOS-Developer-Toolkit?display_name=tag)](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/latest)
+[![CI](https://github.com/hideouts-io/iOS-Developer-Toolkit-Swift/actions/workflows/ci.yml/badge.svg)](https://github.com/hideouts-io/iOS-Developer-Toolkit-Swift/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/hideouts-io/iOS-Developer-Toolkit-Swift?display_name=tag)](https://github.com/hideouts-io/iOS-Developer-Toolkit-Swift/releases/latest)
 ![Platform](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)
 ![Swift](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)
 [![License](https://img.shields.io/badge/license-MIT-2da44e)](LICENSE)
@@ -114,8 +114,8 @@ The Command Line Tools alone are not enough for the Xcode column: `devicectl`, `
 
 ### Download a release
 
-1. Download `iOS-Developer-Toolkit-VERSION-macOS-universal.zip` and `SHA256SUMS.txt` from the
-   [latest release](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases/latest).
+1. Download `iOS-Developer-Toolkit-Swift-VERSION-macOS-universal.zip` and `SHA256SUMS.txt` from the
+   [latest release](https://github.com/hideouts-io/iOS-Developer-Toolkit-Swift/releases/latest).
 2. Verify the download:
 
    ```bash
@@ -125,16 +125,16 @@ The Command Line Tools alone are not enough for the Xcode column: `devicectl`, `
    Optionally verify GitHub's build attestation:
 
    ```bash
-   gh attestation verify iOS-Developer-Toolkit-VERSION-macOS-universal.zip --repo hideouts-io/iOS-Developer-Toolkit
+   gh attestation verify iOS-Developer-Toolkit-Swift-VERSION-macOS-universal.zip --repo hideouts-io/iOS-Developer-Toolkit-Swift
    ```
 
-3. Unzip it and move **iOS Developer Toolkit.app** to `/Applications`.
+3. Unzip it and move **iOS Developer Toolkit (Swift).app** to `/Applications`.
 4. Release builds are ad-hoc signed and not notarized, so macOS asks for confirmation the first
    time. Control-click the app, choose **Open**, and confirm. If there is no Open button, go to
    **System Settings › Privacy & Security** and choose **Open Anyway**. Do not disable Gatekeeper.
 
 Nothing else needs to be installed. The release also contains `idt`, the command-line tool, at
-`iOS Developer Toolkit.app/Contents/MacOS/idt`.
+`iOS Developer Toolkit (Swift).app/Contents/MacOS/idt`.
 
 ### Build it yourself
 
@@ -170,7 +170,7 @@ No device handy? Turn on **Device › Demo Mode** to explore every workspace wit
 - **Install App** — inspect an `.ipa` (or choose a simulator `.app`), see whether the device is in
   the provisioning profile, then install.
 - **Location Lab** — coordinates, map, saved places (stored only on this Mac), routes, GPX playback.
-  Location events are appended to `~/Documents/iOS Developer Toolkit Location Logs/location-events.jsonl`.
+  Location events are appended to `~/Documents/iOS Developer Toolkit (Swift) Location Logs/location-events.jsonl`.
 - **Live Logs** — several concurrent streams; pop out any stream into its own window.
 - **Actions** — the guided action catalog and Advanced Mode.
 - **Backup** — encryption status and setup, full or incremental backups.
@@ -300,7 +300,7 @@ More detail: [docs/troubleshooting.md](docs/troubleshooting.md).
 Requirements: macOS 14+, Xcode 16 or later (Swift 6).
 
 ```bash
-git clone https://github.com/hideouts-io/iOS-Developer-Toolkit.git
+git clone https://github.com/hideouts-io/iOS-Developer-Toolkit-Swift.git
 cd iOS-Developer-Toolkit
 
 swift test                                    # unit and integration tests
@@ -326,7 +326,7 @@ xcodebuild -project iOSDeveloperToolkit.xcodeproj -scheme iOSDeveloperToolkit \
 Documentation screenshots are produced by the app itself:
 
 ```bash
-"iOS Developer Toolkit.app/Contents/MacOS/iOS Developer Toolkit" \
+"iOS Developer Toolkit (Swift).app/Contents/MacOS/iOS Developer Toolkit (Swift)" \
   -demo-mode YES -populate-demo YES -window-size 1180x700 -capture-screenshots ~/Desktop/shots
 ```
 
@@ -338,18 +338,17 @@ See [docs/architecture.md](docs/architecture.md).
 
 ## Project status and limitations
 
-Version 1.0 is a complete rewrite of the earlier Python/PySide6 app (0.3.x), which depended on
+Version 1.0 is a native rewrite of the Python/PySide6 app ([iOS Developer Toolkit](https://github.com/hideouts-io/iOS-Developer-Toolkit), 0.3.x), which depends on
 `pymobiledevice3`. See [MIGRATION.md](MIGRATION.md) for the feature-by-feature mapping. Workspace
 profiles exported by 0.3.x can be imported in **Settings › Profiles**; the preview explains how each
 setting carries over.
 
-### The Python app (0.x)
+### The Python app
 
-The Python/PySide6 app is still maintained, as a separate line: it is developed on the
-[`python`](https://github.com/hideouts-io/iOS-Developer-Toolkit/tree/python) branch and released as
-`v0.x` ([0.x releases](https://github.com/hideouts-io/iOS-Developer-Toolkit/releases?q=v0.&expanded=true),
-with separate Apple silicon and Intel builds). It uses `pymobiledevice3` and Python; this app (1.x)
-needs neither. Workspace profiles move between them: 1.x imports profiles exported by 0.x.
+The Python/PySide6 app, **iOS Developer Toolkit**, is maintained separately in
+[hideouts-io/iOS-Developer-Toolkit](https://github.com/hideouts-io/iOS-Developer-Toolkit), with its releases. It uses `pymobiledevice3` and
+Python; this app needs neither. The two install side by side and keep their data in separate
+folders, and this app imports workspace profiles exported by the Python app.
 
 - The native lockdown services (logs, packet capture, backup, diagnostics, app installation over
   USB, developer-image checking and mounting including Apple personalization) are tested end to

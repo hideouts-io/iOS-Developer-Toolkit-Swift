@@ -8,12 +8,12 @@
 # other OUTPUT_DIR must be empty or absent.
 #
 # Produces, in OUTPUT_DIR:
-#   iOS-Developer-Toolkit-VERSION-macOS-universal.zip  the app (arm64 + x86_64), ad-hoc signed
+#   iOS-Developer-Toolkit-Swift-VERSION-macOS-universal.zip  the app (arm64 + x86_64), ad-hoc signed
 #                                                      with the hardened runtime; idt is at
 #                                                      Contents/MacOS/idt and dependency licenses,
 #                                                      notices, and the SBOM are in
 #                                                      Contents/Resources/Licenses
-#   iOS-Developer-Toolkit-VERSION.spdx.json            SPDX 2.3 SBOM from Package.resolved
+#   iOS-Developer-Toolkit-Swift-VERSION.spdx.json            SPDX 2.3 SBOM from Package.resolved
 #   SHA256SUMS.txt                                     checksums of both files
 set -euo pipefail
 
@@ -50,7 +50,7 @@ CACHE="$ROOT/build-output/release-cache"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/idt-release.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
-NAME="iOS-Developer-Toolkit-$VERSION"
+NAME="iOS-Developer-Toolkit-Swift-$VERSION"
 ZIP="$OUT/$NAME-macOS-universal.zip"
 SBOM="$OUT/$NAME.spdx.json"
 ENTITLEMENTS="App/iOSDeveloperToolkit/iOSDeveloperToolkit.entitlements"
@@ -63,7 +63,7 @@ xcodebuild -project iOSDeveloperToolkit.xcodeproj -scheme iOSDeveloperToolkit \
     -derivedDataPath "$CACHE/DerivedData" -archivePath "$WORK/app.xcarchive" \
     ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
     -quiet archive
-APP="$WORK/app.xcarchive/Products/Applications/iOS Developer Toolkit.app"
+APP="$WORK/app.xcarchive/Products/Applications/iOS Developer Toolkit (Swift).app"
 [[ -d "$APP" ]] || fail "the archive does not contain the app"
 
 step "Building idt (arm64 + x86_64, release)"
@@ -105,7 +105,7 @@ verify_app() {
     local app="$1"
     codesign --verify --deep --strict "$app" || fail "codesign verification failed for $app"
     local details
-    for binary in "$app/Contents/MacOS/iOS Developer Toolkit" "$app/Contents/MacOS/idt"; do
+    for binary in "$app/Contents/MacOS/iOS Developer Toolkit (Swift)" "$app/Contents/MacOS/idt"; do
         details="$(codesign --display --verbose=2 "$binary" 2>&1)"
         grep -q 'Signature=adhoc' <<<"$details" || fail "$(basename "$binary") is not ad-hoc signed"
         grep -Eq 'flags=0x[0-9a-f]+\(.*runtime' <<<"$details" || fail "$(basename "$binary") lacks the hardened runtime"
@@ -136,7 +136,7 @@ ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 step "Verifying the ZIP"
 mkdir "$WORK/unzipped"
 ditto -x -k "$ZIP" "$WORK/unzipped"
-verify_app "$WORK/unzipped/iOS Developer Toolkit.app"
+verify_app "$WORK/unzipped/iOS Developer Toolkit (Swift).app"
 (cd "$OUT" && shasum -a 256 -c SHA256SUMS.txt)
 
 step "Done: $OUT"

@@ -8,7 +8,7 @@ import ToolkitFeatures
 struct IDT: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "idt",
-        abstract: "iOS Developer Toolkit command-line tools.",
+        abstract: "iOS Developer Toolkit (Swift) command-line tools.",
         discussion: "Device identifiers are always explicit: commands that touch a device require --udid.",
         version: ToolkitVersion.current,
         subcommands: [Devices.self, Collect.self, InspectIPA.self, Readiness.self, Toolchain.self, DDI.self]

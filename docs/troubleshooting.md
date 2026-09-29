@@ -46,5 +46,5 @@ the technical details are in **Help › Diagnostic Log**.
    log show --last 10m --predicate 'subsystem == "io.hideouts.iOSDeveloperToolkit"' --info
    ```
 
-Ask in [GitHub Discussions](https://github.com/hideouts-io/iOS-Developer-Toolkit/discussions)
+Ask in [GitHub Discussions](https://github.com/hideouts-io/iOS-Developer-Toolkit-Swift/discussions)
 and follow [SUPPORT.md](../SUPPORT.md) before sharing any output.

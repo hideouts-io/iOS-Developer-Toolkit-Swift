@@ -5,7 +5,7 @@ import ToolkitFeatures
 
 /// Renders the app's own window for documentation and GUI verification:
 ///
-///     "iOS Developer Toolkit" -capture-screenshots <folder>
+///     "iOS Developer Toolkit (Swift)" -capture-screenshots <folder>
 ///         [-demo-mode] [-ui-testing] [-window-size WxH] [-only overview,apps]
 ///         [-populate-demo YES] [-select-booted-simulator YES] [-start-simulator-log YES]
 ///         [-scroll-fraction 0.0–1.0] [-show-sheet reconnect|shortcuts|advanced] [-select-physical-device YES]

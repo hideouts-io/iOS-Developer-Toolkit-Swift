@@ -14,6 +14,13 @@ public repositories at the exact revisions recorded in [`Package.resolved`](Pack
 that tag. They are listed with their licenses in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 and in the SPDX SBOM attached to each release. No binary-only third-party code is included.
 
+The firmware helpers in `Contents/Helpers` (`idevicerestore` and `irecovery`, from the
+libimobiledevice project, LGPL) are built by
+[`scripts/build-restore-helpers.sh`](scripts/build-restore-helpers.sh) from pinned commits and a
+checksum-verified OpenSSL release. Each release attaches their complete corresponding source, with
+that script, as `iOS-Developer-Toolkit-Swift-VERSION-firmware-helpers-source.tar.gz`, covered by
+`SHA256SUMS.txt`.
+
 Optional external tools (MVT, UFADE, idb Companion) are installed and managed by the user and are
 not part of the app or its SBOM.
 

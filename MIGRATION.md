@@ -471,3 +471,54 @@ and 0.3.x's shortcuts for the tenth and later pages and focus (⌘0, ⇧⌘E/M/S
 | G11 | Keyboard shortcut reference (⌘/) and previous/next workspace (⌥⌘← / ⌥⌘→) | P3 | ✅ resolved — Help › Keyboard Shortcuts; View › Previous/Next Workspace |
 | G12 | “Use in Advanced Mode” from Tool Reference; readiness shortcuts on Actions and Evidence | P3 | ✅ resolved |
 | G13 | UFADE developer-image submodule status | P3 | ✅ resolved — shown after Validate |
+
+## 10. Firmware: IPSW Manager and installation
+
+The Python app had no firmware feature; this is new in the Swift app.
+
+### 10.1 Decision: bundle idevicerestore (a documented exception)
+
+The app otherwise uses only Apple mechanisms and its own Swift clients, and never shells out to
+third-party tools. Firmware installation is the exception, by the maintainer's decision: Apple
+provides no public restore API, and reimplementing the restore protocol (iBoot, DFU, ASR, the
+restored daemon, baseband and co-processor updates) would be large and risky for devices. The app
+instead bundles `idevicerestore` and `irecovery` from the libimobiledevice project:
+
+- built by `scripts/build-restore-helpers.sh` from pinned commits (libplist, libimobiledevice-glue,
+  libusbmuxd, libtatsu, libimobiledevice, libirecovery, idevicerestore, libzip) and a
+  checksum-verified OpenSSL 3.5.8 tarball — universal, statically linked, depending only on macOS
+  system libraries (the script and the release both check this);
+- shipped as separate programs in `Contents/Helpers`, signed with the hardened runtime, run only
+  through `CommandRunner` with argument vectors and a minimal environment; never linked;
+- LGPL: license files and `SOURCES.txt` in the app, and each release attaches the complete source;
+- never used for exploits: `irecovery -k` and idevicerestore's `--pwn` are not exposed.
+
+Everything that does not need the restore protocol is native Swift (`Sources/ToolkitFeatures/Firmware`):
+
+| Part | How |
+|---|---|
+| Apple's firmware list | `https://itunes.apple.com/check/version` (Finder's list), cached for a day; current firmware per model with Apple's SHA-1 |
+| Build manifest of a remote IPSW | HTTP range requests against Apple's CDN (ZIP64 central directory, then only `BuildManifest.plist`) — about 0.3 s instead of downloading 8+ GB |
+| Signing status | A TSS request to `gs.apple.com` for the model's erase identity, built as libtatsu builds the AP request (no baseband ticket; skipped components; request rules; `Ap,*` identity values), with a random ECID and nonce. STATUS 0 = signed, 94 = not signed |
+| Downloads | `URLSessionDownloadTask` with resume data kept next to the file; kept only when the SHA-1 matches Apple's |
+| Library | IPSWs are read with the app's own ZIP reader (now with ZIP64); SHA-1 and SHA-256 with CryptoKit |
+| Recovery mode | Enter: lockdown `EnterRecovery` (native). Detect: `irecovery -q` every 3 s while the page is open. Exit: `irecovery -i ECID -n` |
+| Install | `idevicerestore --plain-progress --no-input --cache-path … --logfile … --udid/--ecid … [--erase] IPSW`; progress steps parsed from `progress: <step> <fraction>`; Stop is ignored once the system is being written |
+| Check Before Installing | Model and install type from the manifest, Apple signing, and `idevicerestore --no-action` (finds the device, changes nothing) |
+
+### 10.2 Verification
+
+- Unit tests (`FirmwareTests`, 14): catalog parsing and caching, manifest parsing and identity
+  choice, the TSS request (components, rules, skipped baseband, copied identity values) and
+  reply handling, remote manifest reading against a fake range server, the library and checksums,
+  `irecovery -q` parsing, install command vectors (no shell, validated UDID/ECID), progress and
+  failure parsing, the streaming install runner, and the preflight checks.
+- Network tests (`RealFirmwareTests`, opt-in with `IDT_NETWORK_TESTS=1`), run 2026-09-29: Apple's
+  list gives iPhone18,1 → 27.0.1 (24A446); its manifest is read from Apple's CDN by range
+  requests; Apple's signing server answers **Signed** for it. The helpers run (`idevicerestore
+  1.0.0-git-60192e9`, `irecovery 1.3.1`), including the x86_64 slices under Rosetta.
+- App: builds with zero warnings; the Firmware page renders (checked in Demo Mode).
+
+**Not verified on hardware:** entering or leaving recovery mode, DFU detection, Check Before
+Installing against a device, and Update or Restore on a real device. These need a device that
+can be erased and are left for a supervised test.

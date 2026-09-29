@@ -106,6 +106,7 @@ final class AppModel {
 
     // Feature models
     let developerImage: DeveloperImageModel
+    let firmware: FirmwareModel
     let location: LocationModel
     let logs: LiveLogsModel
     let apps: AppsModel
@@ -134,6 +135,7 @@ final class AppModel {
             : .init()
         discovery = DeviceDiscovery(configuration: configuration)
         developerImage = DeveloperImageModel()
+        firmware = FirmwareModel()
         location = LocationModel()
         logs = LiveLogsModel()
         apps = AppsModel()

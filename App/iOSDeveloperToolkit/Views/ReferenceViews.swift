@@ -153,13 +153,15 @@ struct SafetyView: View {
             Card(title: "What this app is", systemImage: "checkmark.shield") {
                 bullet("A macOS workbench for authorized development, testing, diagnostics, backup, and evidence preservation on devices you own or are allowed to examine.")
                 bullet("It uses Apple's own interfaces: the macOS device service (usbmuxd and lockdown), Xcode's CoreDevice, simctl, and Instruments.")
+                bullet("Firmware installation is the one exception: it uses idevicerestore and irecovery from the open-source libimobiledevice project, bundled with the app as separate programs.")
                 bullet("It runs without administrator rights and never uses sudo, never reads /var/db/lockdown, and never restarts system services.")
             }
             Card(title: "What it does not do", systemImage: "xmark.shield") {
                 bullet("No jailbreak, passcode bypass, sandbox escape, code-signing bypass, or decryption of protected data or traffic.")
                 bullet("Developer services (the Developer Disk Image) do not grant root access or unrestricted file system access.")
                 bullet("AFC and CoreDevice file views are Apple-defined windows onto specific areas, not full file system acquisitions.")
-                bullet("No one-click erase, restore, activation, or supervision. The only restart is a separately confirmed high-impact action.")
+                bullet("No one-click erase, restore, activation, or supervision. Restarting a device and restoring firmware are separately confirmed high-impact actions.")
+                bullet("No firmware downgrades or exploits: only firmware Apple currently signs for the device can be installed.")
             }
             Card(title: "How changes are confirmed", systemImage: "hand.raised") {
                 bullet("Read-only actions run immediately.")

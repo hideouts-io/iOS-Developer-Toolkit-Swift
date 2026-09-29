@@ -62,6 +62,7 @@ struct WorkspaceView: View {
         case .overview: OverviewView()
         case .device: DeviceDetailView()
         case .developerImage: DeveloperImageView()
+        case .firmware: FirmwareView()
         case .readiness: ReadinessView()
         case .apps: AppsView()
         case .installApp: InstallAppView()

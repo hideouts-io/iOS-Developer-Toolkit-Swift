@@ -38,7 +38,8 @@ creates pairing records.
 ## Developer images
 
 Developer-image support lives in `Sources/DeviceKit/DeveloperImage` and is the only code that
-talks to the private `com.apple.mobile.mobile_image_mounter` service or to Apple's signing server:
+talks to the private `com.apple.mobile.mobile_image_mounter` service; it and the firmware code
+below are the only code that talks to Apple's signing server:
 
 | Type | Role |
 |---|---|
@@ -51,6 +52,20 @@ The rest of the app sees only `DeveloperImageStatus` (state, explanation, next s
 The private service and TSS formats follow the open-source implementations the 0.3.x app used;
 they are covered by tests against a stateful fake image mounter, and still need verification on
 physical devices ([PHYSICAL_DEVICE_TEST_PROTOCOL.md](PHYSICAL_DEVICE_TEST_PROTOCOL.md), Stage 3).
+
+## Firmware
+
+Firmware support lives in `Sources/ToolkitFeatures/Firmware`:
+
+| Type | Role |
+|---|---|
+| `FirmwareCatalog` | Apple's firmware list (`itunes.apple.com/check/version`), cached for a day |
+| `FirmwareManifest`, `FirmwareSigning` | `BuildManifest.plist` build identities; the AP signing request built as libtatsu builds it, with a random ECID and nonce, to learn whether Apple signs a build |
+| `RemoteArchive`, `IPSWLibrary`, `FirmwareDownloader` | One file from a remote IPSW by HTTP range requests; the local library, SHA-1/SHA-256; resumable, verified downloads |
+| `RestoreHelper`, `RecoveryProbe`, `FirmwareInstall`, `FirmwarePreflight` | The bundled `idevicerestore` and `irecovery` (separate LGPL programs in `Contents/Helpers`, built by `scripts/build-restore-helpers.sh`): locating them, recovery/DFU detection, install command vectors, progress, failure explanations, and the checks made before installing |
+
+The helpers are the one place the app runs third-party programs it ships; see
+[MIGRATION.md](../MIGRATION.md#10-firmware-ipsw-manager-and-installation) for why.
 
 ## Processes
 

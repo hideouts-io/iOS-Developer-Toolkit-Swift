@@ -364,3 +364,23 @@ struct ReadinessShortcutTests {
         #expect(prepared.risk == .readOnly)
     }
 }
+
+@Suite("Developer Image page")
+struct DeveloperImagePageTests {
+    @Test func hasItsOwnPageNextToDevice() {
+        let all = Workspace.allCases
+        #expect(all.firstIndex(of: .developerImage) == all.firstIndex(of: .device)! + 1)
+        #expect(Workspace.developerImage.group == .device)
+        #expect(Workspace.developerImage.title == "Developer Image")
+        #expect(Workspace(rawValue: "developerImage") == .developerImage)
+        // It is reachable by keyboard like every other page.
+        #expect(KeyboardShortcutReference.sections.flatMap(\.entries).contains { $0.title == "Developer Image" })
+    }
+
+    @Test func everyMountMethodIsExplained() {
+        let explanations = DeveloperImageMechanism.allCases.map(\.explanation)
+        #expect(Set(explanations).count == DeveloperImageMechanism.allCases.count)
+        #expect(explanations.allSatisfy { $0.count > 40 })
+        #expect(DeveloperImageMechanism.native.explanation.contains("online"))
+    }
+}

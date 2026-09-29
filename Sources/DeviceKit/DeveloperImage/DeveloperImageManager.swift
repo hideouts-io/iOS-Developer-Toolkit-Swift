@@ -70,6 +70,18 @@ public enum DeveloperImageMechanism: String, Sendable, Hashable, Codable, CaseIt
         case .native: return "Built-in (image mounter over USB)"
         }
     }
+
+    /// What choosing this mechanism means, in plain language.
+    public var explanation: String {
+        switch self {
+        case .automatic:
+            return "Uses Xcode's device service when it can reach the device, otherwise the built-in client. Recommended."
+        case .coreDevice:
+            return "Asks Xcode to prepare the device, exactly as Xcode does. Needs Xcode, and a device that Xcode can see."
+        case .native:
+            return "The app's own image-mounter client over USB, with no Xcode device service involved. On iOS 17 and later, Apple personalizes the image first, so this Mac must be online."
+        }
+    }
 }
 
 /// Facts about the device that decide which image it needs.

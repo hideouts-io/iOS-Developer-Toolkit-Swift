@@ -6,6 +6,7 @@ import Foundation
 public enum Workspace: String, CaseIterable, Codable, Sendable, Identifiable {
     case overview
     case device
+    case developerImage
     case readiness
     case apps
     case installApp
@@ -25,6 +26,7 @@ public enum Workspace: String, CaseIterable, Codable, Sendable, Identifiable {
         switch self {
         case .overview: return "Overview"
         case .device: return "Device"
+        case .developerImage: return "Developer Image"
         case .readiness: return "Readiness Check"
         case .apps: return "Apps"
         case .installApp: return "Install App"
@@ -44,6 +46,7 @@ public enum Workspace: String, CaseIterable, Codable, Sendable, Identifiable {
         switch self {
         case .overview: return "square.grid.2x2"
         case .device: return "iphone"
+        case .developerImage: return "opticaldiscdrive"
         case .readiness: return "checklist"
         case .apps: return "app.badge"
         case .installApp: return "square.and.arrow.down.on.square"
@@ -63,6 +66,7 @@ public enum Workspace: String, CaseIterable, Codable, Sendable, Identifiable {
         switch self {
         case .overview: return "What you can do and where to start"
         case .device: return "Identity, trust, Developer Mode, and developer services"
+        case .developerImage: return "Check, mount, and unmount Apple's developer image"
         case .readiness: return "Check every prerequisite before you start"
         case .apps: return "Installed apps: search, sizes, launch, and remove"
         case .installApp: return "Inspect an .ipa or .app, then install it"
@@ -89,7 +93,7 @@ public enum Workspace: String, CaseIterable, Codable, Sendable, Identifiable {
     public var group: Group {
         switch self {
         case .overview: return .start
-        case .device, .readiness, .apps, .installApp: return .device
+        case .device, .developerImage, .readiness, .apps, .installApp: return .device
         case .location, .liveLogs, .actions: return .develop
         case .backup, .evidence, .externalTools: return .data
         case .activity, .help, .safety: return .reference

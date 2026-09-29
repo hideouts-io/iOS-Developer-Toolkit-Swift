@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		0046784D38773E756D16B381 /* DeviceViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 192082EDB2AA8A31B4DE9A43 /* DeviceViews.swift */; };
 		0E51C7116150795B48ED38A0 /* ReadinessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7E525F882B8476846CFA326 /* ReadinessView.swift */; };
+		1061CDB40FBAC1EEE77206D5 /* DeveloperImageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC1B9D11BA0887FAFECDC9DF /* DeveloperImageView.swift */; };
 		1623B3509BB855616EA203F0 /* iOSDeveloperToolkitApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FC5D72518E6E2101A0B339B /* iOSDeveloperToolkitApp.swift */; };
 		16410705637BF3C36BD60ADB /* LocationViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC558873395BD2D10988B49F /* LocationViews.swift */; };
 		1BEAAB3DA748A2FF696A37BE /* LiveLogsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD1BCA4BFD074C07318C65CC /* LiveLogsModel.swift */; };
@@ -65,6 +66,7 @@
 		C6641462093807C7726C77E6 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		CD1BCA4BFD074C07318C65CC /* LiveLogsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveLogsModel.swift; sourceTree = "<group>"; };
 		D34F678B9113D08044E08644 /* FeatureModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeatureModels.swift; sourceTree = "<group>"; };
+		DC1B9D11BA0887FAFECDC9DF /* DeveloperImageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeveloperImageView.swift; sourceTree = "<group>"; };
 		E7E525F882B8476846CFA326 /* ReadinessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadinessView.swift; sourceTree = "<group>"; };
 		EC558873395BD2D10988B49F /* LocationViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationViews.swift; sourceTree = "<group>"; };
 		EF4B82A9EAB2FEBF4FBE2FA2 /* AppsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppsViews.swift; sourceTree = "<group>"; };
@@ -132,6 +134,7 @@
 				EF4B82A9EAB2FEBF4FBE2FA2 /* AppsViews.swift */,
 				C6641462093807C7726C77E6 /* ContentView.swift */,
 				B37EBEC3A6576895CA18665A /* DataViews.swift */,
+				DC1B9D11BA0887FAFECDC9DF /* DeveloperImageView.swift */,
 				192082EDB2AA8A31B4DE9A43 /* DeviceViews.swift */,
 				EC558873395BD2D10988B49F /* LocationViews.swift */,
 				B81EECBCB7D517436001EFF8 /* LogViews.swift */,
@@ -291,6 +294,7 @@
 				743B753A384188F88D118565 /* ContentView.swift in Sources */,
 				ACAA69DD86A135192765E423 /* DataViews.swift in Sources */,
 				74E2D8771554772F6F5085DB /* DeveloperImageModel.swift in Sources */,
+				1061CDB40FBAC1EEE77206D5 /* DeveloperImageView.swift in Sources */,
 				0046784D38773E756D16B381 /* DeviceViews.swift in Sources */,
 				9F456A81A2AF3E4B9BA9E1A0 /* FeatureModels.swift in Sources */,
 				1BEAAB3DA748A2FF696A37BE /* LiveLogsModel.swift in Sources */,

@@ -45,7 +45,7 @@ Instruments. It needs no Python, no Homebrew packages, and no administrator righ
 | **Devices** | Automatic discovery of USB and Wi-Fi–synced devices (event-driven, no polling), Xcode-paired network devices, and simulators — shown in separate *Physical Devices* and *Simulators* sections. |
 | **Plain-language device details** | Name, model, hardware identifier, UDID, iOS version and build, architecture, connection, trust, Developer Mode, and developer-service status, each with an explanation. Identifying values stay hidden until you choose to show them. |
 | **Readiness Check** | A read-only check of every prerequisite (Xcode, the macOS device service, connection, trust, Developer Mode, Xcode's device service, developer services, Instruments, lock state, logging and backup services, Safari Web Inspector) with a next step for anything not ready. |
-| **Live Logs** | Unified Logging and classic syslog from physical devices, and the simulator's unified log. Every byte is spooled and hashed; the view can be paused and filtered (literal or regex) without affecting capture. Mark findings, then export the raw capture, filtered lines, or an evidence bundle. |
+| **Live Logs** | Unified Logging and classic syslog streamed from physical devices, and the simulator's unified log; plus two collected sources: an **OSLog archive** (the device's saved log history for a time window, kept as a `.logarchive` for Console) and **DVT logging** (os_log recorded through Instruments, kept as a `.trace`). Every byte is spooled and hashed; the view can be paused and filtered (literal or regex) without affecting capture. Mark findings, then export the raw capture, filtered lines, or an evidence bundle. |
 | **Location Lab** | Set a coordinate (offline world map, map-link parsing, nudges, saved places), move along a route at constant speed, or replay a GPX track. Always clearable; every change is logged. |
 | **Apps** | Search and sort installed apps (with sizes over USB), launch, and remove with confirmation. |
 | **Install App** | Inspect an `.ipa` on the Mac first — contents, provisioning profile, and code signature verified with Security.framework — then install it on a device, or install an `.app` on a simulator. |
@@ -253,7 +253,7 @@ idt ddi unmount --udid <UDID> --confirm "RUN ABC123"
 idt toolchain                                 # check the installed Xcode
 ```
 
-`--include-oslog`, the 0.3.x name of `--include-unified-logs`, is still accepted.
+`--include-oslog-archive` adds the device's saved Unified Log history for the last hour (`log collect`); `--include-dvt-logs` records os_log through Instruments (DVT) for the stream duration. `--include-oslog`, the 0.3.x flag for the DVT OSLog stream, is still accepted and selects DVT logging.
 
 `idt collect` exits with `0` when complete, `2` when finished with coverage gaps, and `1` when the
 device could not be identified.

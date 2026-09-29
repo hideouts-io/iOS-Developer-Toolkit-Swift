@@ -69,7 +69,7 @@ Swift device discovery (usbmuxd + CoreDevice + simctl), so nothing is lost.
 | 10 | Location Lab (coordinate, nudge, saved places, offline map, map-link parsing, route generator, GPX inspection/replay, evidence log, clear) | `pmd3 developer dvt simulate-location` | Physical: CoreDevice `simulate location coordinate/route/clear`; Simulator: `simctl location`; GPX replay driven by the app; offline MapKit-free world map | devicectl, simctl | No | ✅ simulators · 🟡 physical |
 | 11 | Live Logs — Unified | `pmd3 syslog live --format json` (os_trace_relay) | Native `com.apple.os_trace_relay` client; Simulator: `simctl spawn log stream --style ndjson` | Lockdown service / simctl | No | ✅ simulators · 🟡 physical |
 | 12 | Live Logs — Classic syslog | `pmd3 syslog live-old` | Native `com.apple.syslog_relay` client | Lockdown service | No | 🟡 |
-| 13 | Live Logs — DVT OSLog | `pmd3 developer dvt oslog` | 🔁 Covered by #11 (os_trace_relay needs no DDI); DVT/DTX is not an Apple-public interface | — | No | 🔁 🟡 |
+| 13 | Live Logs — DVT OSLog | `pmd3 developer dvt oslog` | 🔁 Live Logs › **DVT Logging**: a timed Instruments Logging recording (`xctrace record`, then `xctrace export` of the os-log table), shown line by line and kept as a `.trace`; also an Evidence Capture option. Live streaming as in 0.3.x would need a DTX client over Xcode's private tunnel. The live Unified stream (#11) needs no developer image. Live Logs › **OSLog Archive** adds the device's saved history (`log collect`). | Xcode (xctrace); macOS `log` | No | 🔁 ✅ simulator · 🟡 physical |
 | 14 | Live log spool, pause, filter (literal/regex/case), findings, review, raw/filtered save, evidence bundle, metadata sidecar | `live_logs.py` | Ported (`LogCapture`, `FindingsStore`, `InvestigationReport`) | Foundation | No | ✅ |
 | 15 | Command Center — 49 `pmd3` presets + Advanced Mode + risk classes + typed confirmation | `command_catalog.py`, `action_safety.py` | 🔁 Guided **Actions** catalog backed by native services / devicectl / simctl / xctrace, same risk classes and device-bound `RUN XXXXXX` / `IRREVERSIBLE XXXXXX` phrases; Advanced Mode for `devicectl` with safety classification | Yes | No | 🔁 ✅ simulators · 🟡 physical |
 | 16 | Guided Command Drift | `pmd3 <route> --help` probes | 🔁 **Toolchain Check**: verifies every devicectl/simctl/xctrace route the app uses is present in the installed Xcode | Yes | No | 🔁 ✅ |
@@ -297,8 +297,9 @@ that changes the device was run: no mounting, location, installation, or backup.
   macOS is 14 (was 13).
 - Guided actions replace the 49 raw `pymobiledevice3` presets; Advanced Mode runs `devicectl`
   instead of arbitrary `pymobiledevice3` subcommands.
-- DVT telemetry streams are replaced by Instruments recordings (`xctrace`); the DVT OSLog stream by
-  the Unified Logging stream, which needs no developer image.
+- DVT telemetry streams are replaced by Instruments recordings (`xctrace`). The DVT OSLog stream is
+  replaced by DVT Logging, a timed Instruments Logging recording shown line by line; the live
+  Unified Logging stream needs no developer image, and the OSLog Archive adds the saved history.
 - Features that need a developer tunnel (iOS 17+) now require Xcode, which owns the tunnel.
 
 ## 7. Migration log
@@ -407,7 +408,7 @@ and 0.3.x's shortcuts for the tenth and later pages and focus (⌘0, ⇧⌘E/M/S
 | dvt-list (`developer dvt ls`) | — | — | §6.1: DTX over RemoteXPC on iOS 17+ |
 | crash-list, crash-pull | Actions (native AFC) | = | `BackupAndAFCTests` |
 | syslog | Live Logs · Classic syslog | = | `ServiceTests` |
-| oslog (DVT) | Live Logs · Unified (os_trace_relay, no DDI) | 🔁 | `ServiceTests`, real-simulator test |
+| oslog (DVT) | Live Logs · DVT Logging (Instruments Logging recording, exported) and Unified (os_trace_relay, no DDI); OSLog Archive (`log collect`) | 🔁 | `CollectedLogTests`, real-simulator test (DVT: 9,608 lines in 3 s) |
 | pcap | Action `packet-capture`, Evidence stream | = | `nativeActionsRunAgainstTheCapturedTarget` |
 | btlogger (`--format pcapng`) | Action `bluetooth-capture` (native, `.pklg`) | 🔁 (**G4 resolved**; PacketLogger format instead of pcapng) | `bluetoothRecordsBecomeAPacketLoggerFile`, `nativeActionsRunAgainstTheCapturedTarget` |
 | dvt-device, dvt-proclist, dvt-applist | device details / processes / apps | 🔁 | — |
@@ -448,7 +449,7 @@ and 0.3.x's shortcuts for the tenth and later pages and focus (⌘0, ⇧⌘E/M/S
 
 | Item | Swift | Class |
 |---|---|---|
-| `ios-developer-collect` (all options) | `idt collect` — `--include-oslog` renamed `--include-unified-logs`; the old name is still accepted (hidden from help) | = (**G7 resolved**) |
+| `ios-developer-collect` (all options) | `idt collect` — `--include-oslog` (0.3.x DVT OSLog) is accepted and selects `--include-dvt-logs`; `--include-oslog-archive` adds `log collect` | = (**G7 resolved**) |
 | `ios-ipa-inspect`, `ios-local-ddi` | `idt inspect-ipa`, `idt ddi` | = / 🔁 |
 | Evidence snapshots (17) | lockdown, images, diagnostics ×4, apps, provisioning, crashes, AFC root, CoreDevice details; processes and configuration profiles (native over USB since G1/G2); cryptex list and DVT ×3 excluded (RemoteXPC/DTX) | = (**G1**, **G2** resolved) |
 | `tests/` behaviours | ported to Swift tests (see §5.1); packaging/runtime tests replaced by `scripts/build-release.sh` checks | = |
@@ -463,7 +464,7 @@ and 0.3.x's shortcuts for the tenth and later pages and focus (⌘0, ⇧⌘E/M/S
 | G4 | Bluetooth HCI capture (`com.apple.bluetooth.BTPacketLogger`) to `.pklg` | P1 | ✅ resolved — action “Bluetooth capture” |
 | G5 | Guided reconnect | P2 | ✅ resolved — Device › Reconnect a Device…, also on the Connection diagnostics and No-device cards |
 | G6 | Import 0.3.x workspace profiles; profile fields for the developer-image mechanism and selected action | P2 | ✅ resolved — tested with a profile written by 0.3.4's own exporter |
-| G7 | `idt collect --include-oslog` accepted as an alias | P2 | ✅ resolved — hidden alias of `--include-unified-logs` |
+| G7 | `idt collect --include-oslog` accepted as an alias | P2 | ✅ resolved — hidden alias of `--include-dvt-logs` (DVT logging through Instruments) |
 | G8 | Instruments readiness row (replaces the DVT row) | P2 | ✅ resolved — Readiness row “Instruments (xctrace)” from `xctrace list devices` (available / offline / not listed); the Instruments recording action waits for it |
 | G9 | Add current coordinate as a route waypoint | P3 | ✅ resolved — Location Lab › Route › Add Current Coordinate |
 | G10 | Copy the findings register | P3 | ✅ resolved — Live Logs › Findings › Copy Register (Markdown, same as the evidence bundle's report) |

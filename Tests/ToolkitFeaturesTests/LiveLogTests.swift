@@ -105,8 +105,8 @@ struct LiveLogTests {
     }
 
     @Test func streamKindsMatchDeviceKinds() {
-        #expect(LogStreamKind.available(for: .physical) == [.unified, .classic])
-        #expect(LogStreamKind.available(for: .simulator) == [.simulator])
+        #expect(LogStreamKind.available(for: .physical) == [.unified, .classic, .osLogArchive, .dvt])
+        #expect(LogStreamKind.available(for: .simulator) == [.simulator, .dvt])
         #expect(LogStreamKind.available(for: .demo).isEmpty)
     }
 }

@@ -277,11 +277,11 @@ public actor LogCapture {
         case .classic:
             var parser = SyslogRecordParser()
             lines = (parser.consume(data) + parser.flush()).map(\.message)
-        case .unified, .simulator:
+        case .unified, .simulator, .osLogArchive, .dvt:
             var splitter = LineSplitter()
             let raw = splitter.consume(data) + splitter.flush()
             lines = raw.compactMap { line -> String? in
-                if kind == .simulator { return SimulatorLogParser.parse(line: line)?.rendered }
+                if kind != .unified { return SimulatorLogParser.parse(line: line)?.rendered }
                 guard let json = try? JSONValue.parse(Data(line.utf8)) else { return String(line) }
                 return LogLine(timestamp: json["timestamp"]?.string.flatMap(ISO8601.parse), process: json["process"]?.string, pid: json["pid"]?.int, level: json["level"]?.string, subsystem: json["subsystem"]?.string, category: json["category"]?.string, message: json["message"]?.string ?? "").rendered
             }

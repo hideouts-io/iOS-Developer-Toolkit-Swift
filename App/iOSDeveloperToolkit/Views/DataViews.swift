@@ -141,6 +141,8 @@ struct EvidenceView: View {
                     Toggle("Network packet capture (PCAP)", isOn: $evidence.options.includePacketCapture)
                     Toggle("Screenshot", isOn: $evidence.options.includeScreenshot)
                     Toggle("Copy crash reports", isOn: $evidence.options.includeCrashReports)
+                    Toggle("OSLog archive: the device's saved logs from the last hour", isOn: $evidence.options.includeOSLogArchive)
+                    Toggle("DVT logging through Instruments (\(evidence.options.dvtSeconds) s; needs Developer Mode and the developer image)", isOn: $evidence.options.includeDVTLogging)
                     Text("Logs, packet captures, screenshots, and crash reports can contain private information.").font(.caption).foregroundStyle(.secondary)
                     ReadinessStatusView(requirements: evidence.options.requirements, device: device, subject: "this collection")
                 }

@@ -130,6 +130,39 @@ struct EvidenceTests {
         #expect(manifest.outcome.exitCode == 2)
     }
 
+    @Test(.enabled(if: xcodeAvailable)) func collectsOSLogArchiveAndDVTLogging() async throws {
+        let server = try FakeDeviceServer()
+        registerStandardServices(server, afc: FakeAFCFileSystem(files: [:]), crashes: FakeAFCFileSystem(files: [:]))
+        try await server.start()
+        defer { Task { await server.stop() } }
+        let root = try SecureFileIO.makeTemporaryDirectory(prefix: "collect-logs")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let device = physicalDevice(server)
+        let runner = FakeToolRunner(exportedXML: Data(CollectedLogTests.exportedXML.utf8))
+        let options = CollectionOptions(durationSeconds: 0, includeUnifiedLogs: false, includeOSLogArchive: true, includeDVTLogging: true)
+
+        let folder = try CaseWorkflow.createCaseFolder(in: root, target: device.target)
+        let manifest = try await EvidenceCollector(device: device, caseFolder: folder, options: options, runner: runner, usbmux: server.client).run { _ in }
+        let status = Dictionary(manifest.steps.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
+        #expect(status["oslog-archive"]?.status == .succeeded, "\(status["oslog-archive"]?.detail ?? "missing")")
+        #expect(status["dvt-logging"]?.status == .succeeded, "\(status["dvt-logging"]?.detail ?? "missing")")
+        #expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent("artifacts/device.logarchive").path))
+        #expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent("artifacts/dvt-logging.trace").path))
+        #expect(try String(contentsOf: folder.appendingPathComponent("streams/dvt-logging.jsonl"), encoding: .utf8).contains("Launched Maps"))
+        #expect(try HashManifest.verify(folder: folder, fileName: "SHA256SUMS").isEmpty)
+        // The archive request asks for the last hour.
+        #expect(runner.requests.current.contains { $0.arguments.starts(with: ["collect"]) && $0.arguments.contains("3600s") })
+
+        // A refused archive is a coverage gap with a plain-language reason, not a silent skip.
+        runner.refuseCollect = true
+        let second = try CaseWorkflow.createCaseFolder(in: root.appendingPathComponent("second"), target: device.target)
+        let refused = try await EvidenceCollector(device: device, caseFolder: second, options: options, runner: runner, usbmux: server.client).run { _ in }
+        let archive = refused.steps.first { $0.id == "oslog-archive" }
+        #expect(archive?.status == .failed)
+        #expect(archive?.detail == "macOS did not allow collecting the device's log archive.")
+        #expect(refused.outcome == .partial)
+    }
+
     @Test func failsWhenTheDeviceCannotBeIdentified() async throws {
         let server = try FakeDeviceServer()
         server.pairRecordAvailable = false

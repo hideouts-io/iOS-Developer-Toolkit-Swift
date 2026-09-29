@@ -13,30 +13,51 @@ struct LiveLogsView: View {
             TargetHeader(allowedKinds: [.physical, .simulator])
             if let device = model.selectedDevice {
                 let kinds = LogStreamKind.available(for: device.kind)
-                HStack(spacing: 10) {
-                    ForEach(kinds) { kind in
-                        Button {
-                            model.logs.start(kind, target: device.target, app: model)
-                        } label: {
-                            Label("Start \(kind.title)", systemImage: "play.fill")
+                let live = kinds.filter { !$0.isCollected }
+                let collected = kinds.filter(\.isCollected)
+                if kinds.isEmpty {
+                    Text("Live logs are not available for the demo device.").foregroundStyle(.secondary)
+                }
+                if !live.isEmpty {
+                    HStack(spacing: 10) {
+                        Text("Stream").font(.callout.weight(.semibold)).frame(width: 64, alignment: .leading)
+                        ForEach(live) { kind in startButton(kind, device: device, label: "Start \(kind.title)", symbol: "play.fill") }
+                        Spacer()
+                    }
+                }
+                if !collected.isEmpty {
+                    @Bindable var logs = model.logs
+                    HStack(spacing: 10) {
+                        Text("Collect").font(.callout.weight(.semibold)).frame(width: 64, alignment: .leading)
+                        Picker("Window", selection: $logs.collectionSeconds) {
+                            ForEach(CollectedLogs.windows, id: \.self) { seconds in
+                                Text(seconds < 60 ? "\(seconds) s" : "\(seconds / 60) min").tag(seconds)
+                            }
                         }
-                        .help(kind.summary)
-                        .accessibilityIdentifier("start-\(kind.rawValue)")
+                        .fixedSize()
+                        .help("OSLog Archive collects this much saved history; DVT Logging records for this long.")
+                        .accessibilityIdentifier("collection-window")
+                        ForEach(collected) { kind in
+                            startButton(kind, device: device, label: kind == .osLogArchive ? "Collect OSLog Archive" : "Record DVT Logging", symbol: kind == .osLogArchive ? "tray.and.arrow.down" : "record.circle")
+                        }
+                        Spacer()
                     }
-                    if kinds.isEmpty {
-                        Text("Live logs are not available for the demo device.").foregroundStyle(.secondary)
-                    }
-                    Spacer()
                 }
                 if !kinds.isEmpty {
-                    Text(kinds.map(\.summary).joined(separator: " "))
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    DisclosureGroup("About these sources") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(kinds) { kind in
+                                Text("**\(kind.title):** \(kind.summary)").fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
                 }
             }
             if model.logs.sessions.isEmpty {
-                ContentUnavailableView("No Log Streams", systemImage: "text.alignleft", description: Text("Start a stream above. Every byte is saved to a private spool on this Mac, even while the view is paused or filtered."))
+                ContentUnavailableView("No Logs Yet", systemImage: "text.alignleft", description: Text("Start a stream or a collection above. Every byte is saved to a private spool on this Mac, even while the view is paused or filtered."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Picker("Stream", selection: Binding(get: { model.logs.selectedSession?.id }, set: { model.logs.selectedSessionID = $0 })) {
@@ -64,6 +85,16 @@ struct LiveLogsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(20)
+    }
+
+    private func startButton(_ kind: LogStreamKind, device: Device, label: String, symbol: String) -> some View {
+        Button {
+            model.logs.start(kind, target: device.target, app: model)
+        } label: {
+            Label(label, systemImage: symbol)
+        }
+        .help(kind.summary)
+        .accessibilityIdentifier("start-\(kind.rawValue)")
     }
 }
 
@@ -131,7 +162,7 @@ struct LogSessionView: View {
             .accessibilityLabel("Log lines")
             .overlay {
                 if lines.isEmpty {
-                    Text(session.state == .starting ? "Connecting…" : (session.filter.isEmpty ? "Waiting for log messages…" : "No lines match the filter."))
+                    Text(session.state == .starting ? "Connecting…" : (session.filter.isEmpty ? (session.kind.isCollected ? "Collecting… the lines appear when it finishes." : "Waiting for log messages…") : "No lines match the filter."))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -169,6 +200,11 @@ struct LogSessionView: View {
                     Button("Show Spool in Finder") { FilePanels.reveal(session.capture.spoolURL) }
                 }
                 .fixedSize()
+                if let artifact = session.artifactURL {
+                    Button(session.kind == .dvt ? "Open in Instruments" : "Open in Console") { NSWorkspace.shared.open(artifact) }
+                        .help(artifact.path)
+                    Button("Show in Finder") { FilePanels.reveal(artifact) }
+                }
             }
         }
         .sheet(isPresented: $isMarkingFinding) {

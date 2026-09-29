@@ -150,7 +150,7 @@ See [Build from source](#build-from-source).
 4. **Turn on Developer Mode if needed** (iOS 16+): *Settings › Privacy & Security › Developer
    Mode*, then restart and confirm. **Device › Developer Mode Guide** walks through it.
 5. **Mount the developer image** for screenshots, location simulation, and launching apps: the
-   **Developer image** card on the Device page shows its state; click **Mount Developer Image**.
+   **Developer Image** page (in the sidebar, under Device) shows its state; click **Mount Developer Image**.
    See [Developer images](#developer-images).
 6. **Clean up** when finished: stop streams and clear simulated locations. Quitting the app
    clears a location this session simulated.
@@ -160,10 +160,12 @@ No device handy? Turn on **Device › Demo Mode** to explore every workspace wit
 ## Workspaces
 
 - **Overview** — status of the selected device, a suggested next step, and entry points.
-- **Device** — identity and status with explanations, the developer image (state, mount,
-  unmount), Apple developer tool handoffs (open a project in Xcode, open an `.xcresult` or
+- **Device** — identity and status with explanations, a summary of the developer image, Apple developer tool handoffs (open a project in Xcode, open an `.xcresult` or
   `.trace`, list Remote Virtual Interfaces), simulator controls, raw records, and connection
   diagnostics.
+- **Developer Image** — the developer image on the selected device (state, details, mount,
+  unmount), how to mount it (automatic, Xcode's device service, or the built-in client), the
+  images on this Mac and folders you add, and what is mounted on the device.
 - **Readiness Check** — the read-only prerequisite check, a copyable report, and a local history
   of tested devices that can be exported as sanitized JSON or Markdown.
 - **Apps** — installed apps with search, sort, sizes, launch, and confirmed removal.
@@ -200,8 +202,8 @@ that the device answering is the one you selected.
 ## Developer images
 
 Screenshots, location simulation, launching apps, and Instruments need Apple's developer image
-(Developer Disk Image) mounted on the device. The **Developer image** card on the Device page
-checks it automatically and shows one of these states:
+(Developer Disk Image) mounted on the device. The **Developer Image** page (sidebar, under Device)
+checks it automatically and shows one of these states; the Device page shows a summary:
 
 [![Developer image card](docs/screenshots/developer-image.png)](docs/screenshots/developer-image.png)
 
@@ -229,9 +231,9 @@ with a one-time nonce, exactly as Xcode does. The confirmation says so before an
 **iOS 16 and earlier** use `DeveloperDiskImage.dmg` and its `.signature` for the exact iOS
 `major.minor` version. Current Xcode versions no longer include them; add a folder that contains
 them (for example an older Xcode's `Platforms/iPhoneOS.platform/DeviceSupport/16.4`) with
-**Options › Add Image Folder…**.
+**Add Image Folder…** on the Developer Image page.
 
-**How it mounts** (Options › Mount with): *Automatic* uses Xcode's device service (`devicectl`)
+**How it mounts** (Developer Image › How to mount): *Automatic* uses Xcode's device service (`devicectl`)
 when it can reach the device on iOS 17 and later, and otherwise the built-in client, which talks
 to the device's image-mounter service over USB and works without Xcode's device service. The app
 never downloads images from third parties.
@@ -287,7 +289,7 @@ device could not be identified.
 | “This device has not trusted this Mac” | Unlock the device and reconnect it; tap **Trust**. If no prompt appears, reset *Settings › General › Transfer or Reset › Reset › Reset Location & Privacy*. |
 | Developer Mode is missing on the device | Connect it and open Xcode › *Window › Devices and Simulators* once. |
 | Developer features say they need Xcode | Install Xcode, open it once, and check *Xcode › Settings › Locations › Command Line Tools*. |
-| The developer image will not mount | Read the Developer image card: it names the problem (Developer Mode, lock, missing or incompatible image) and the fix. On iOS 17 and later keep the Mac online (Apple personalizes the image); if one route fails, switch **Options › Mount with**. |
+| The developer image will not mount | Read the Developer Image page: it names the problem (Developer Mode, lock, missing or incompatible image) and the fix. On iOS 17 and later keep the Mac online (Apple personalizes the image); if one route fails, switch **How to mount** on the Developer Image page. |
 | A backup stops with “must stay unlocked” | Unlock the device and keep it awake until the backup finishes. |
 | An `.ipa` cannot be installed | Check the inspection: the signature must be valid and the profile must include the device. |
 | Live logs are very busy | Filter the view or pause it; capture continues in the background. |

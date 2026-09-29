@@ -56,7 +56,7 @@ final class DeveloperImageModel {
         let failure = LockedValue<Error?>(nil)
         working.insert(device.id)
         defer { working.remove(device.id) }
-        let result = await app.run("Mount developer image", workspace: .device, target: target, transport: mechanism.label) { operation in
+        let result = await app.run("Mount developer image", workspace: .developerImage, target: target, transport: mechanism.label) { operation in
             do {
                 return try await manager.mount(target, mechanism: mechanism, userFolders: folders) { progress in
                     operation.report(progress.step, progress: progress.fraction)
@@ -82,7 +82,7 @@ final class DeveloperImageModel {
         let folders = folders
         working.insert(device.id)
         defer { working.remove(device.id) }
-        if let result = await app.run("Unmount developer image", workspace: .device, target: target, transport: "mobile_image_mounter UnmountImage", { _ in
+        if let result = await app.run("Unmount developer image", workspace: .developerImage, target: target, transport: "mobile_image_mounter UnmountImage", { _ in
             try await manager.unmount(target, userFolders: folders)
         }) {
             statuses[device.id] = result

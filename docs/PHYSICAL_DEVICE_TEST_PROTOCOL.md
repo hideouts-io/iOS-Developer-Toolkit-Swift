@@ -58,7 +58,7 @@ of issues and pull requests. Report results as **passed**, **failed**, **not app
 
 ## Stage 3 — with Xcode and Developer Mode
 
-1. **Developer image** card: note the state and details (iOS, build, model, chip/board). Expect
+1. **Developer Image** page: note the state and details (iOS, build, model, chip/board). Expect
    *Personalization required* or *Available* on iOS 17+, *Available* or *Missing* on iOS 16 and earlier.
 2. **Mount Developer Image** with *Mount with: Built-in*. Expect *Mounted*. Record whether Apple
    personalization was needed. Then **Mount Developer Image** again: nothing should be uploaded.

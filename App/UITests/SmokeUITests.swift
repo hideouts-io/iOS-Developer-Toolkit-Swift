@@ -41,7 +41,7 @@ final class SmokeUITests: XCTestCase {
     }
 
     func testEveryWorkspaceOpens() throws {
-        let workspaces = ["overview", "device", "readiness", "apps", "installApp", "location", "liveLogs", "actions", "backup", "evidence", "externalTools", "activity", "help", "safety"]
+        let workspaces = ["overview", "device", "developerImage", "readiness", "apps", "installApp", "location", "liveLogs", "actions", "backup", "evidence", "externalTools", "activity", "help", "safety"]
         for workspace in workspaces {
             let item = app.descendants(matching: .any)["sidebar-\(workspace)"]
             XCTAssertTrue(item.waitForExistence(timeout: 5), "Missing sidebar item \(workspace)")
@@ -64,8 +64,13 @@ final class SmokeUITests: XCTestCase {
     }
 
     func testDeveloperImageCardShowsStateAndBlocksDemoMount() throws {
+        // The Device page summarizes the state and opens the Developer Image page.
         app.descendants(matching: .any)["sidebar-device"].click()
+        let open = app.buttons["open-developer-image"]
+        XCTAssertTrue(open.waitForExistence(timeout: 10), "The Device page does not link to the Developer Image page")
+        open.click()
         XCTAssertTrue(app.descendants(matching: .any)["ddi-state"].waitForExistence(timeout: 10), "The developer image state is not shown")
+        XCTAssertTrue(app.descendants(matching: .any)["ddi-mechanism"].exists, "The mount method choice is missing")
         let mount = app.buttons["mount-ddi"]
         XCTAssertTrue(mount.waitForExistence(timeout: 5))
         XCTAssertFalse(mount.isEnabled, "Mounting must be disabled in Demo Mode")

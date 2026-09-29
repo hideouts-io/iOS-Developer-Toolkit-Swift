@@ -11,15 +11,43 @@ public struct CollectionOptions: Codable, Sendable, Hashable {
     public var includePacketCapture: Bool
     public var includeScreenshot: Bool
     public var includeCrashReports: Bool
+    /// The device's saved Unified Log history for the last hour (`log collect`).
+    public var includeOSLogArchive: Bool
+    /// os_log recorded through Instruments (DVT) for the stream duration.
+    public var includeDVTLogging: Bool
 
-    public init(durationSeconds: Int = 60, includeClassicSyslog: Bool = false, includeUnifiedLogs: Bool = true, includePacketCapture: Bool = false, includeScreenshot: Bool = false, includeCrashReports: Bool = false) {
+    public init(durationSeconds: Int = 60, includeClassicSyslog: Bool = false, includeUnifiedLogs: Bool = true, includePacketCapture: Bool = false, includeScreenshot: Bool = false, includeCrashReports: Bool = false, includeOSLogArchive: Bool = false, includeDVTLogging: Bool = false) {
         self.durationSeconds = durationSeconds
         self.includeClassicSyslog = includeClassicSyslog
         self.includeUnifiedLogs = includeUnifiedLogs
         self.includePacketCapture = includePacketCapture
         self.includeScreenshot = includeScreenshot
         self.includeCrashReports = includeCrashReports
+        self.includeOSLogArchive = includeOSLogArchive
+        self.includeDVTLogging = includeDVTLogging
     }
+
+    enum CodingKeys: String, CodingKey {
+        case durationSeconds, includeClassicSyslog, includeUnifiedLogs, includePacketCapture, includeScreenshot, includeCrashReports, includeOSLogArchive, includeDVTLogging
+    }
+
+    /// Profiles and manifests written before the OSLog archive and DVT options existed still load.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            durationSeconds: try c.decode(Int.self, forKey: .durationSeconds),
+            includeClassicSyslog: try c.decode(Bool.self, forKey: .includeClassicSyslog),
+            includeUnifiedLogs: try c.decode(Bool.self, forKey: .includeUnifiedLogs),
+            includePacketCapture: try c.decode(Bool.self, forKey: .includePacketCapture),
+            includeScreenshot: try c.decode(Bool.self, forKey: .includeScreenshot),
+            includeCrashReports: try c.decode(Bool.self, forKey: .includeCrashReports),
+            includeOSLogArchive: try c.decodeIfPresent(Bool.self, forKey: .includeOSLogArchive) ?? false,
+            includeDVTLogging: try c.decodeIfPresent(Bool.self, forKey: .includeDVTLogging) ?? false
+        )
+    }
+
+    /// How long a DVT recording runs: the stream duration, within Instruments' practical limits.
+    public var dvtSeconds: Int { min(max(durationSeconds, 10), CollectedLogs.maximumDVTSeconds) }
 
     public func validated() throws -> CollectionOptions {
         guard (0...3600).contains(durationSeconds) else { throw ToolkitError.invalidInput("The stream duration must be between 0 and 3,600 seconds.") }
@@ -29,7 +57,7 @@ public struct CollectionOptions: Codable, Sendable, Hashable {
     /// What a collection with these options needs: a trusted connection, and Xcode's device
     /// service for the screenshot.
     public var requirements: [ActionRequirement] {
-        [.trustedDevice] + (includeScreenshot ? [.coreDevice] : [])
+        [.trustedDevice] + (includeScreenshot ? [.coreDevice] : []) + (includeDVTLogging ? [.developerMode, .instruments] : [])
     }
 
     var hasStreams: Bool { durationSeconds > 0 && (includeClassicSyslog || includeUnifiedLogs || includePacketCapture) }
@@ -394,6 +422,30 @@ public actor EvidenceCollector {
                 _ = try await coreDevice.screenshot(target, to: folder.appendingPathComponent("artifacts/screen.png"))
             }
         }
+        let runner = self.runner
+        if options.includeOSLogArchive {
+            await snapshotFile("oslog-archive", "OSLog archive (last hour)", "log collect --device-udid", file: "artifacts/device.logarchive", events: events) {
+                let archive = folder.appendingPathComponent("artifacts/device.logarchive")
+                try SecureFileIO.createPrivateDirectory(at: archive.deletingLastPathComponent())
+                let result = try await runner.run(try CollectedLogs.osLogArchiveRequest(udid: target.udid, windowSeconds: CollectedLogs.evidenceArchiveSeconds, output: archive))
+                guard result.succeeded, FileManager.default.fileExists(atPath: archive.path) else { throw CollectedLogs.archiveError(result) }
+            }
+        }
+        if options.includeDVTLogging {
+            let seconds = options.dvtSeconds
+            await snapshotFile("dvt-logging", "DVT logging (Instruments, \(seconds) s)", "xctrace record --template Logging, xctrace export", file: "streams/dvt-logging.jsonl", timeout: TimeInterval(seconds + 900), events: events) {
+                let trace = folder.appendingPathComponent("artifacts/dvt-logging.trace")
+                let lines = folder.appendingPathComponent("streams/dvt-logging.jsonl")
+                try SecureFileIO.createPrivateDirectory(at: trace.deletingLastPathComponent())
+                try SecureFileIO.createPrivateDirectory(at: lines.deletingLastPathComponent())
+                try SecureFileIO.writeNewFile(Data(), to: lines)
+                let output = try FileHandle(forWritingTo: lines)
+                defer { try? output.close() }
+                for try await chunk in CollectedLogs.stream(.dvt, target: target, seconds: seconds, artifact: trace, runner: runner) {
+                    try output.write(contentsOf: chunk.spoolBytes)
+                }
+            }
+        }
         if options.includeCrashReports {
             await snapshotFile("crash-reports", "Crash reports", "crashreportcopymobile (AFC)", file: "artifacts/crashes", events: events) {
                 let destination = folder.appendingPathComponent("artifacts/crashes")
@@ -411,7 +463,7 @@ public actor EvidenceCollector {
         }
     }
 
-    private func snapshotFile(_ id: String, _ title: String, _ mechanism: String, file: String, unavailableUnless available: Bool = true, events: @escaping @Sendable (CollectionEvent) -> Void, _ body: @escaping @Sendable () async throws -> Void) async {
+    private func snapshotFile(_ id: String, _ title: String, _ mechanism: String, file: String, unavailableUnless available: Bool = true, timeout: TimeInterval = 900, events: @escaping @Sendable (CollectionEvent) -> Void, _ body: @escaping @Sendable () async throws -> Void) async {
         events(.stepStarted(title))
         let started = Date()
         guard available else {
@@ -419,7 +471,7 @@ public actor EvidenceCollector {
             return
         }
         do {
-            try await withTimeout(900, operation: title) { try await body() }
+            try await withTimeout(timeout, operation: title) { try await body() }
             record(CollectionStep(id: id, title: title, mechanism: mechanism, required: false, status: .succeeded, attempts: 1, startedAt: started, finishedAt: Date(), outputPath: file, detail: ""), events: events)
         } catch {
             record(CollectionStep(id: id, title: title, mechanism: mechanism, required: false, status: .failed, attempts: 1, startedAt: started, finishedAt: Date(), outputPath: nil, detail: (error as? ToolkitError)?.message ?? error.localizedDescription), events: events)

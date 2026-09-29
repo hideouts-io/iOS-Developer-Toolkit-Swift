@@ -12,6 +12,7 @@ public enum AppleTool: String, CaseIterable, Sendable {
     case ditto
     case rvictl
     case swVers = "sw_vers"
+    case log
 
     public var candidates: [URL] {
         switch self {
@@ -24,6 +25,7 @@ public enum AppleTool: String, CaseIterable, Sendable {
         case .ditto: return [URL(fileURLWithPath: "/usr/bin/ditto")]
         case .rvictl: return [URL(fileURLWithPath: "/Library/Apple/usr/bin/rvictl"), URL(fileURLWithPath: "/usr/bin/rvictl")]
         case .swVers: return [URL(fileURLWithPath: "/usr/bin/sw_vers")]
+        case .log: return [URL(fileURLWithPath: "/usr/bin/log")]
         }
     }
 

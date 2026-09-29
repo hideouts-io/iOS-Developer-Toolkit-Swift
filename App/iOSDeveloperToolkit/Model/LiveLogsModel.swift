@@ -40,6 +40,8 @@ final class LogSession: Identifiable {
     var findings: [LiveLogFinding] = []
     var investigationReference = ""
     var hasUnsavedData = true
+    /// The .logarchive or .trace a collected source keeps, once it exists.
+    var artifactURL: URL?
     fileprivate var task: Task<Void, Never>?
     private var pending: [LogLine] = []
     private var flushScheduled = false
@@ -105,6 +107,8 @@ final class LogSession: Identifiable {
 final class LiveLogsModel {
     var sessions: [LogSession] = []
     var selectedSessionID: UUID?
+    /// The time window for OSLog archives and DVT recordings, in seconds.
+    var collectionSeconds = 60
 
     var selectedSession: LogSession? {
         sessions.first { $0.id == selectedSessionID } ?? sessions.last
@@ -123,15 +127,18 @@ final class LiveLogsModel {
         selectedSessionID = session.id
         let runner = app.runner
         let started = Date()
+        let seconds = collectionSeconds
         session.task = Task { [weak session] in
             do {
-                let stream = try await LiveLogSource.open(kind, target: target, runner: runner)
+                let artifact = kind.artifactExtension.map { capture.spoolURL.deletingPathExtension().appendingPathExtension($0) }
+                let stream = try await LiveLogSource.open(kind, target: target, runner: runner, windowSeconds: seconds, artifact: artifact)
                 session?.state = .running
                 for try await chunk in stream {
                     try await capture.append(chunk)
                     session?.receive(chunk)
                 }
-                session?.stop(reason: "the device ended the stream")
+                if let artifact, FileManager.default.fileExists(atPath: artifact.path) { session?.artifactURL = artifact }
+                session?.stop(reason: kind.isCollected ? "collection finished" : "the device ended the stream")
                 app.record(title: kind.title, workspace: .liveLogs, target: target, transport: kind.serviceDescription, argv: [], started: started, finished: Date(), outcome: .succeeded, error: nil, outputPaths: [capture.spoolURL.path])
             } catch is CancellationError {
                 app.record(title: kind.title, workspace: .liveLogs, target: target, transport: kind.serviceDescription, argv: [], started: started, finished: Date(), outcome: .cancelled, error: nil, outputPaths: [capture.spoolURL.path])

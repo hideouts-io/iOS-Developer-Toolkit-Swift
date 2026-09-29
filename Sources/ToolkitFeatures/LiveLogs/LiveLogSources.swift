@@ -7,6 +7,10 @@ public enum LogStreamKind: String, CaseIterable, Sendable, Codable, Identifiable
     case unified
     case classic
     case simulator
+    /// The device's saved Unified Log history, collected with `log collect`.
+    case osLogArchive
+    /// os_log recorded through Instruments' developer services (DVT).
+    case dvt
 
     public var id: String { rawValue }
 
@@ -15,6 +19,8 @@ public enum LogStreamKind: String, CaseIterable, Sendable, Codable, Identifiable
         case .unified: return "Unified Logs"
         case .classic: return "Classic Syslog"
         case .simulator: return "Simulator Logs"
+        case .osLogArchive: return "OSLog Archive"
+        case .dvt: return "DVT Logging"
         }
     }
 
@@ -23,10 +29,24 @@ public enum LogStreamKind: String, CaseIterable, Sendable, Codable, Identifiable
         case .unified: return "Structured Unified Logging with process, level, subsystem, and category. Works on any trusted device; no developer image needed."
         case .classic: return "The older plain-text syslog relay. Useful for tools that expect traditional syslog lines."
         case .simulator: return "The simulator's Unified Log, streamed with `log stream`."
+        case .osLogArchive: return "The device's saved Unified Log history for a time window, collected with macOS's `log collect` and kept as a .logarchive that Console.app opens. No Xcode needed."
+        case .dvt: return "os_log and signposts recorded through Instruments' developer services (DVT) for a set time, then shown here and kept as a .trace. Needs Xcode, Developer Mode, and the developer image."
         }
     }
 
     public var isStructured: Bool { self != .classic }
+
+    /// Collected once over a time window, rather than streamed until stopped.
+    public var isCollected: Bool { self == .osLogArchive || self == .dvt }
+
+    /// The file a collected source keeps (Console or Instruments opens it).
+    public var artifactExtension: String? {
+        switch self {
+        case .osLogArchive: return "logarchive"
+        case .dvt: return "trace"
+        default: return nil
+        }
+    }
     public var spoolExtension: String { isStructured ? "jsonl" : "log" }
 
     public var serviceDescription: String {
@@ -34,13 +54,15 @@ public enum LogStreamKind: String, CaseIterable, Sendable, Codable, Identifiable
         case .unified: return "com.apple.os_trace_relay (lockdown)"
         case .classic: return "com.apple.syslog_relay (lockdown)"
         case .simulator: return "xcrun simctl spawn <udid> log stream --style ndjson"
+        case .osLogArchive: return "/usr/bin/log collect --device-udid <udid>, then log show --archive"
+        case .dvt: return "xcrun xctrace record --template Logging, then xctrace export"
         }
     }
 
     public static func available(for kind: DeviceKind) -> [LogStreamKind] {
         switch kind {
-        case .physical: return [.unified, .classic]
-        case .simulator: return [.simulator]
+        case .physical: return [.unified, .classic, .osLogArchive, .dvt]
+        case .simulator: return [.simulator, .dvt]
         case .demo: return []
         }
     }
@@ -48,8 +70,13 @@ public enum LogStreamKind: String, CaseIterable, Sendable, Codable, Identifiable
 
 /// Opens a live log stream for a target.
 public enum LiveLogSource {
-    public static func open(_ kind: LogStreamKind, target: DeviceTarget, runner: CommandRunning = ProcessCommandRunner(), usbmux: USBMuxClient = USBMuxClient()) async throws -> AsyncThrowingStream<LogChunk, Error> {
+    /// Opens `kind`. Collected sources gather `windowSeconds` of logs and keep their archive or
+    /// recording at `artifact`.
+    public static func open(_ kind: LogStreamKind, target: DeviceTarget, runner: CommandRunning = ProcessCommandRunner(), usbmux: USBMuxClient = USBMuxClient(), windowSeconds: Int = 300, artifact: URL? = nil) async throws -> AsyncThrowingStream<LogChunk, Error> {
         switch kind {
+        case .osLogArchive, .dvt:
+            let file = try artifact ?? SecureFileIO.makeTemporaryDirectory(prefix: "collected-logs").appendingPathComponent("\(kind.rawValue).\(kind.artifactExtension ?? "out")")
+            return CollectedLogs.stream(kind, target: target, seconds: windowSeconds, artifact: file, runner: runner)
         case .unified, .classic:
             guard target.kind == .physical else { throw ToolkitError(.unsupported, message: "\(kind.title) are only available for physical devices.") }
             let session = try await DeviceSession.open(target: target, usbmux: usbmux)

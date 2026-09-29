@@ -81,7 +81,9 @@ struct Collect: AsyncParsableCommand {
     @Option(help: "Stream duration in seconds (0–3600).") var duration = 60
     @Flag(help: "Capture the classic syslog stream.") var includeSyslog = false
     @Flag(help: "Capture the Unified Logging stream.") var includeUnifiedLogs = false
-    /// The 0.3.x name of --include-unified-logs, still accepted so existing scripts keep working.
+    @Flag(help: "Collect the device's saved Unified Log history for the last hour (log collect).") var includeOSLogArchive = false
+    @Flag(help: "Record os_log through Instruments (DVT) for the stream duration (needs Xcode, Developer Mode, and the developer image).") var includeDVTLogs = false
+    /// The 0.3.x flag for the DVT OSLog stream, still accepted so existing scripts keep working.
     @Flag(name: .customLong("include-oslog"), help: .hidden) var includeOSLog = false
     @Flag(help: "Capture network packets (PCAP).") var includePcap = false
     @Flag(help: "Save a screenshot (needs Xcode).") var includeScreenshot = false
@@ -103,7 +105,7 @@ struct Collect: AsyncParsableCommand {
             } else {
                 folder = try CaseWorkflow.createCaseFolder(in: URL(fileURLWithPath: ((outputRoot ?? "") as NSString).expandingTildeInPath), target: device.target)
             }
-            let options = CollectionOptions(durationSeconds: duration, includeClassicSyslog: includeSyslog, includeUnifiedLogs: includeUnifiedLogs || includeOSLog, includePacketCapture: includePcap, includeScreenshot: includeScreenshot, includeCrashReports: includeCrashPull)
+            let options = CollectionOptions(durationSeconds: duration, includeClassicSyslog: includeSyslog, includeUnifiedLogs: includeUnifiedLogs, includePacketCapture: includePcap, includeScreenshot: includeScreenshot, includeCrashReports: includeCrashPull, includeOSLogArchive: includeOSLogArchive, includeDVTLogging: includeDVTLogs || includeOSLog)
             let collector = try EvidenceCollector(device: device, caseFolder: folder, options: options)
             print("Collecting from \(device.name) into \(folder.path)")
             let manifest = await collector.run { event in

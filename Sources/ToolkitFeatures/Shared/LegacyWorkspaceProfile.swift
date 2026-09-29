@@ -175,7 +175,7 @@ enum LegacyWorkspaceProfile {
         }
         notes.append("Developer-image source “\(settings.ddiSource)” → \(DeveloperImageMechanism.native.label). Images come from Xcode or a folder you add; nothing is downloaded.")
         if evidence.includeOSLog {
-            notes.append("DVT OSLog → Unified Logging (no developer image needed).")
+            notes.append("DVT OSLog → DVT logging through Instruments (needs Xcode, Developer Mode, and the developer image).")
         }
 
         var profile = WorkspaceProfile(
@@ -187,7 +187,7 @@ enum LegacyWorkspaceProfile {
             developerImageMechanism: .native,
             apps: .init(calculateSizes: settings.appWorkflow.calculateAppSizes, includeSystemApps: false, installAsDeveloperPackage: settings.appWorkflow.installAsDeveloperPackage),
             backup: .init(forceFullBackup: settings.backupWorkflow.forceFullBackup, requireEncryption: settings.backupWorkflow.requireEncryption),
-            evidence: CollectionOptions(durationSeconds: evidence.captureDurationSeconds, includeClassicSyslog: evidence.includeSyslog, includeUnifiedLogs: evidence.includeOSLog, includePacketCapture: evidence.includePcap, includeScreenshot: evidence.includeScreenshot, includeCrashReports: evidence.includeCrashPull),
+            evidence: CollectionOptions(durationSeconds: evidence.captureDurationSeconds, includeClassicSyslog: evidence.includeSyslog, includeUnifiedLogs: false, includePacketCapture: evidence.includePcap, includeScreenshot: evidence.includeScreenshot, includeCrashReports: evidence.includeCrashPull, includeDVTLogging: evidence.includeOSLog),
             location: .init(timingJitterMilliseconds: settings.locationWorkflow.timingRandomnessMilliseconds, ignoreRecordedTiming: settings.locationWorkflow.ignoreTimingDelays, routeSpeedKmh: settings.locationWorkflow.routeSpeedKmh, routeIntervalSeconds: settings.locationWorkflow.routeIntervalSeconds, routeTraversals: settings.locationWorkflow.routeTraversals)
         )
         profile.createdWithVersion = file.createdWithVersion

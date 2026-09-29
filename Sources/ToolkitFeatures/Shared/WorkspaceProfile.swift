@@ -171,7 +171,7 @@ public struct WorkspaceProfile: Codable, Sendable, Hashable {
             developerImageMechanism.map { "Developer image: mount with \($0.label)" },
             "Apps: sizes \(apps.calculateSizes ? "on" : "off"), system apps \(apps.includeSystemApps ? "shown" : "hidden"), developer package installs \(apps.installAsDeveloperPackage ? "on" : "off")",
             "Backup: \(backup.forceFullBackup ? "always full" : "incremental when possible"), encryption \(backup.requireEncryption ? "required" : "optional")",
-            "Evidence: \(evidence.durationSeconds)s streams; syslog \(evidence.includeClassicSyslog ? "on" : "off"), unified logs \(evidence.includeUnifiedLogs ? "on" : "off"), packet capture \(evidence.includePacketCapture ? "on" : "off"), screenshot \(evidence.includeScreenshot ? "on" : "off"), crash reports \(evidence.includeCrashReports ? "on" : "off")",
+            "Evidence: \(evidence.durationSeconds)s streams; syslog \(evidence.includeClassicSyslog ? "on" : "off"), unified logs \(evidence.includeUnifiedLogs ? "on" : "off"), packet capture \(evidence.includePacketCapture ? "on" : "off"), screenshot \(evidence.includeScreenshot ? "on" : "off"), crash reports \(evidence.includeCrashReports ? "on" : "off"), OSLog archive \(evidence.includeOSLogArchive ? "on" : "off"), DVT logging \(evidence.includeDVTLogging ? "on" : "off")",
             "Location: route \(location.routeSpeedKmh) km/h every \(location.routeIntervalSeconds)s × \(location.routeTraversals); GPX timing \(location.ignoreRecordedTiming ? "ignored" : "kept") with ±\(location.timingJitterMilliseconds) ms",
         ].compactMap { $0 }.joined(separator: "\n")
     }

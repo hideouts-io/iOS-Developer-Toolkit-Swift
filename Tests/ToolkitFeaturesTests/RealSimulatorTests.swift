@@ -69,6 +69,19 @@ struct RealSimulatorTests {
         #expect(metadata.rawBytes > 0, "no log bytes captured (\(lines) lines)")
         #expect(metadata.rawSHA256?.count == 64)
 
+        // DVT logging: a short Instruments Logging recording, exported and parsed.
+        step("dvt logging")
+        let dvtFolder = try SecureFileIO.makeTemporaryDirectory(prefix: "dvt-e2e")
+        defer { try? FileManager.default.removeItem(at: dvtFolder) }
+        let trace = dvtFolder.appendingPathComponent("logging.trace")
+        var dvtLines: [LogLine] = []
+        for try await chunk in CollectedLogs.stream(.dvt, target: target, seconds: 3, artifact: trace, runner: ProcessCommandRunner()) { dvtLines += chunk.lines }
+        let recorded = dvtLines.filter { $0.level != "note" }
+        print("[simulator e2e] DVT logging: \(recorded.count) lines")
+        #expect(FileManager.default.fileExists(atPath: trace.path))
+        #expect(recorded.count > 10, "no os_log lines were read from the recording")
+        #expect(recorded.contains { $0.timestamp != nil && $0.process != nil && $0.subsystem != nil })
+
         let executor = ActionExecutor()
         let openURL = try await executor.execute(try #require(ActionCatalog.descriptor("open-url")), target: target, values: ["url": "https://example.com"])
         #expect(openURL.summary.contains("example.com"))

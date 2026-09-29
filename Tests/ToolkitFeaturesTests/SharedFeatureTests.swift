@@ -168,11 +168,11 @@ struct SharedFeatureTests {
         #expect(profile.developerImageMechanism == .native)
         #expect(profile.apps == .init(calculateSizes: false, includeSystemApps: false, installAsDeveloperPackage: true))
         #expect(profile.backup == .init(forceFullBackup: true, requireEncryption: true))
-        #expect(profile.evidence == CollectionOptions(durationSeconds: 120, includeClassicSyslog: true, includeUnifiedLogs: true, includePacketCapture: false, includeScreenshot: false, includeCrashReports: true))
+        #expect(profile.evidence == CollectionOptions(durationSeconds: 120, includeClassicSyslog: true, includeUnifiedLogs: false, includePacketCapture: false, includeScreenshot: false, includeCrashReports: true, includeDVTLogging: true))
         #expect(profile.location == .init(timingJitterMilliseconds: 250, ignoreRecordedTiming: true, routeSpeedKmh: 35, routeIntervalSeconds: 3, routeTraversals: 4))
         #expect(imported.notes.contains { $0.contains("“btlogger” → action “Bluetooth capture”") })
         #expect(imported.notes.contains { $0.contains("nothing is downloaded") })
-        #expect(imported.notes.contains { $0.contains("DVT OSLog → Unified Logging") })
+        #expect(imported.notes.contains { $0.contains("DVT OSLog → DVT logging through Instruments") })
         // Once imported it is an ordinary profile.
         #expect(try WorkspaceProfile.decode(try profile.encoded()) == profile)
 
@@ -382,5 +382,29 @@ struct DeveloperImagePageTests {
         #expect(Set(explanations).count == DeveloperImageMechanism.allCases.count)
         #expect(explanations.allSatisfy { $0.count > 40 })
         #expect(DeveloperImageMechanism.native.explanation.contains("online"))
+    }
+}
+
+@Suite("Evidence options with OSLog archive and DVT")
+struct EvidenceLogOptionTests {
+    @Test func olderSavedOptionsStillLoad() throws {
+        let old = Data(#"{"durationSeconds":120,"includeClassicSyslog":true,"includeUnifiedLogs":true,"includePacketCapture":false,"includeScreenshot":false,"includeCrashReports":true}"#.utf8)
+        let options = try JSONOutput.decoder().decode(CollectionOptions.self, from: old)
+        #expect(options.durationSeconds == 120 && options.includeCrashReports)
+        #expect(!options.includeOSLogArchive && !options.includeDVTLogging)
+        let round = try JSONOutput.decoder().decode(CollectionOptions.self, from: JSONOutput.encode(CollectionOptions(includeOSLogArchive: true, includeDVTLogging: true)))
+        #expect(round.includeOSLogArchive && round.includeDVTLogging)
+    }
+
+    @Test func dvtNeedsDeveloperServicesAndStaysBounded() {
+        var options = CollectionOptions(durationSeconds: 0)
+        #expect(options.dvtSeconds == 10)
+        options.durationSeconds = 3600
+        #expect(options.dvtSeconds == CollectedLogs.maximumDVTSeconds)
+        options.includeDVTLogging = true
+        #expect(options.requirements.contains(.developerMode) && options.requirements.contains(.instruments))
+        options.includeDVTLogging = false
+        options.includeOSLogArchive = true
+        #expect(options.requirements == [.trustedDevice])
     }
 }

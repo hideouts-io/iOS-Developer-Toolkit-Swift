@@ -72,7 +72,7 @@ public struct PersonalizationIdentifiers: Sendable, Hashable {
 /// carries the `ApImg4Ticket` the device needs to mount the image.
 public enum ImagePersonalization {
     static let logger = ToolkitLog.logger(.networking)
-    static let clientVersion = "libauthinstall-1033.0.2"
+    public static let clientVersion = "libauthinstall-1033.0.2"
 
     /// Parameters the restore-request rules are evaluated against (a production device).
     static let ruleParameters: [String: Bool] = [
@@ -82,6 +82,11 @@ public enum ImagePersonalization {
     ]
 
     public static func request(identity: DeveloperImageBuildIdentity, identifiers: PersonalizationIdentifiers, nonce: Data, requestID: UUID = UUID()) -> PlistValue {
+        request(manifest: identity.manifest, identifiers: identifiers, nonce: nonce, requestID: requestID)
+    }
+
+    /// The request for any build identity's `Manifest` (developer images and firmware alike).
+    public static func request(manifest: [String: PlistValue], identifiers: PersonalizationIdentifiers, nonce: Data, requestID: UUID = UUID()) -> PlistValue {
         var request: [String: PlistValue] = [
             "@HostPlatformInfo": "mac",
             "@VersionInfo": .string(clientVersion),
@@ -99,8 +104,8 @@ public enum ImagePersonalization {
             "UID_MODE": false,
         ]
         for (key, value) in identifiers.additional { request[key] = value }
-        let fallbackRules = identity.manifest["LoadableTrustCache"]?["Info"]?["RestoreRequestRules"]?.arrayValue ?? []
-        for (key, item) in identity.manifest {
+        let fallbackRules = manifest["LoadableTrustCache"]?["Info"]?["RestoreRequestRules"]?.arrayValue ?? []
+        for (key, item) in manifest {
             guard let entry = item.dictionaryValue, let info = entry["Info"], entry["Trusted"]?.boolValue == true else { continue }
             var tssEntry = entry
             tssEntry.removeValue(forKey: "Info")
@@ -114,7 +119,7 @@ public enum ImagePersonalization {
 
     /// Applies `RestoreRequestRules`: when every condition matches the production parameters, the
     /// rule's actions are written into the entry (255 means “leave unchanged”).
-    static func applyRules(_ rules: [PlistValue], to entry: [String: PlistValue]) -> [String: PlistValue] {
+    public static func applyRules(_ rules: [PlistValue], to entry: [String: PlistValue]) -> [String: PlistValue] {
         var entry = entry
         for rule in rules {
             let conditions = rule["Conditions"]?.dictionaryValue ?? [:]
@@ -150,6 +155,12 @@ public enum ImagePersonalization {
             throw ToolkitError(.protocolViolation, message: "Apple's signing server did not return a ticket for the developer image.", technicalDetail: String(text.prefix(500)))
         }
         return ticket
+    }
+
+    /// Apple's `STATUS` and `MESSAGE` from a signing reply (`STATUS=0&MESSAGE=SUCCESS&…`).
+    public static func status(fromResponse body: Data) -> (status: Int?, message: String) {
+        let text = String(decoding: body, as: UTF8.self)
+        return (field("STATUS", in: text).flatMap { Int($0) }, field("MESSAGE", in: text) ?? "")
     }
 
     static func field(_ name: String, in text: String) -> String? {

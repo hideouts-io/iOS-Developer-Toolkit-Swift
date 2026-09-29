@@ -107,6 +107,12 @@ public actor DeviceSession {
         try await lockdown.getValue(domain: domain, key: key)
     }
 
+    /// Asks the device to restart into recovery mode (lockdown `EnterRecovery`). The device leaves
+    /// recovery with a restore, an update, or a "reboot to normal mode" from the recovery tools.
+    public func enterRecovery() async throws {
+        _ = try await lockdown.request("EnterRecovery")
+    }
+
     /// Developer Mode status from AMFI (iOS 16+). `nil` when the device does not report it.
     public func developerModeEnabled() async throws -> Bool? {
         try await lockdown.getValue(domain: "com.apple.security.mac.amfi", key: "DeveloperModeStatus")?.boolValue

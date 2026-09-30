@@ -32,7 +32,9 @@ public final class ZipArchive: @unchecked Sendable {
     private let handle: FileHandle
     private let fileSize: UInt64
 
-    public init(url: URL) throws {
+    /// Opens a ZIP file. `maximumTotal` bounds the declared uncompressed size of all entries
+    /// together (firmware archives are larger than app packages).
+    public init(url: URL, maximumTotal: UInt64 = ZipArchive.maximumTotalUncompressedBytes) throws {
         guard let handle = try? FileHandle(forReadingFrom: url) else {
             throw ToolkitError.fileSystem("The package could not be opened.", path: url.path)
         }
@@ -40,7 +42,7 @@ public final class ZipArchive: @unchecked Sendable {
         self.handle = handle
         fileSize = (try? handle.seekToEnd()) ?? 0
         entries = try ZipArchive.readCentralDirectory(handle: handle, fileSize: fileSize)
-        try ZipArchive.validate(entries)
+        try ZipArchive.validate(entries, maximumTotal: maximumTotal)
     }
 
     deinit {
@@ -49,7 +51,7 @@ public final class ZipArchive: @unchecked Sendable {
 
     // MARK: Validation
 
-    public static func validate(_ entries: [Entry]) throws {
+    public static func validate(_ entries: [Entry], maximumTotal: UInt64 = maximumTotalUncompressedBytes) throws {
         var seen = Set<String>()
         var total: UInt64 = 0
         for entry in entries {
@@ -67,7 +69,7 @@ public final class ZipArchive: @unchecked Sendable {
                 throw ToolkitError.invalidInput("The package uses an unsupported compression method (\(entry.compressionMethod)).")
             }
             total += entry.uncompressedSize
-            if total > maximumTotalUncompressedBytes {
+            if total > maximumTotal {
                 throw ToolkitError.invalidInput("The package expands beyond the 8 GB inspection limit.")
             }
         }
@@ -207,38 +209,97 @@ public final class ZipArchive: @unchecked Sendable {
 
     // MARK: Central directory
 
-    static func readCentralDirectory(handle: FileHandle, fileSize: UInt64) throws -> [Entry] {
-        guard fileSize >= 22 else { throw ToolkitError.invalidInput("The file is not a valid package (too small).") }
-        let tailLength = min(fileSize, 65_557)
-        try handle.seek(toOffset: fileSize - tailLength)
-        let tail = try handle.read(upToCount: Int(tailLength)) ?? Data()
+    /// Where the central directory lives, from the last bytes of the archive.
+    public struct DirectoryLocation: Sendable, Equatable {
+        public var entryCount: UInt64
+        public var size: UInt64
+        public var offset: UInt64
+        /// Set when the archive uses ZIP64: the offset of the 56-byte ZIP64 end record to read next.
+        public var zip64RecordOffset: UInt64?
+    }
+
+    /// Parses the end-of-central-directory record from the archive's last (up to 65,557) bytes.
+    public static func directoryLocation(tail: Data) throws -> DirectoryLocation {
         guard let eocd = tail.lastRange(of: Data([0x50, 0x4B, 0x05, 0x06]))?.lowerBound else {
             throw ToolkitError.invalidInput("The file is not a valid ZIP-based package.")
         }
         let eocdRelative = eocd - tail.startIndex
-        var entryCount = UInt64(tail.readUInt16LE(eocdRelative + 10))
-        var directorySize = UInt64(tail.readUInt32LE(eocdRelative + 12))
-        var directoryOffset = UInt64(tail.readUInt32LE(eocdRelative + 16))
-
-        if entryCount == 0xFFFF || directorySize == 0xFFFF_FFFF || directoryOffset == 0xFFFF_FFFF {
-            // ZIP64: locate the ZIP64 end-of-central-directory record.
+        guard eocdRelative + 22 <= tail.count else { throw ToolkitError.invalidInput("The package directory is damaged.") }
+        var location = DirectoryLocation(
+            entryCount: UInt64(tail.readUInt16LE(eocdRelative + 10)),
+            size: UInt64(tail.readUInt32LE(eocdRelative + 12)),
+            offset: UInt64(tail.readUInt32LE(eocdRelative + 16)),
+            zip64RecordOffset: nil
+        )
+        if location.entryCount == 0xFFFF || location.size == 0xFFFF_FFFF || location.offset == 0xFFFF_FFFF {
             guard eocdRelative >= 20, tail.readUInt32LE(eocdRelative - 20) == 0x0706_4B50 else {
                 throw ToolkitError.invalidInput("The package's ZIP64 directory is missing.")
             }
-            let zip64Offset = tail.readUInt64LE(eocdRelative - 12)
-            try handle.seek(toOffset: zip64Offset)
-            guard let record = try handle.read(upToCount: 56), record.count == 56, record.readUInt32LE(0) == 0x0606_4B50 else {
-                throw ToolkitError.invalidInput("The package's ZIP64 directory is damaged.")
-            }
-            entryCount = record.readUInt64LE(32)
-            directorySize = record.readUInt64LE(40)
-            directoryOffset = record.readUInt64LE(48)
+            location.zip64RecordOffset = tail.readUInt64LE(eocdRelative - 12)
         }
-        guard entryCount <= UInt64(maximumEntries), directoryOffset + directorySize <= fileSize, directorySize <= 512 * 1024 * 1024 else {
+        return location
+    }
+
+    /// Completes a ZIP64 location from the 56-byte ZIP64 end-of-central-directory record.
+    public static func applyZip64Record(_ record: Data, to location: inout DirectoryLocation) throws {
+        guard record.count >= 56, record.readUInt32LE(0) == 0x0606_4B50 else {
+            throw ToolkitError.invalidInput("The package's ZIP64 directory is damaged.")
+        }
+        location.entryCount = record.readUInt64LE(32)
+        location.size = record.readUInt64LE(40)
+        location.offset = record.readUInt64LE(48)
+        location.zip64RecordOffset = nil
+    }
+
+    /// Checks a directory location against the archive size before it is read.
+    public static func checkLocation(_ location: DirectoryLocation, fileSize: UInt64) throws {
+        guard location.entryCount <= UInt64(maximumEntries), location.offset + location.size <= fileSize, location.size <= 512 * 1024 * 1024 else {
             throw ToolkitError.invalidInput("The package directory is invalid or too large.")
         }
-        try handle.seek(toOffset: directoryOffset)
-        let directory = try handle.read(upToCount: Int(directorySize)) ?? Data()
+    }
+
+    /// Where an entry's data starts, from its local header (at least the first 30 bytes).
+    public static func dataOffset(localHeader: Data, for entry: Entry) throws -> UInt64 {
+        guard localHeader.count >= 30, localHeader.readUInt32LE(0) == 0x0403_4B50 else {
+            throw ToolkitError.invalidInput("The package has a damaged entry header: \(entry.name)")
+        }
+        return entry.localHeaderOffset + 30 + UInt64(localHeader.readUInt16LE(26)) + UInt64(localHeader.readUInt16LE(28))
+    }
+
+    /// Decompresses one entry held in memory (stored or deflated), checking its declared size.
+    public static func decompress(_ data: Data, entry: Entry) throws -> Data {
+        if entry.compressionMethod == 0 {
+            guard UInt64(data.count) == entry.uncompressedSize else { throw ToolkitError.invalidInput("\(entry.name) is truncated or corrupt.") }
+            return data
+        }
+        guard entry.compressionMethod == 8 else { throw ToolkitError.invalidInput("\(entry.name) uses an unsupported compression method.") }
+        let capacity = Int(entry.uncompressedSize)
+        var output = Data(count: capacity)
+        let written = output.withUnsafeMutableBytes { destination in
+            data.withUnsafeBytes { source in
+                compression_decode_buffer(destination.bindMemory(to: UInt8.self).baseAddress!, capacity, source.bindMemory(to: UInt8.self).baseAddress!, data.count, nil, COMPRESSION_ZLIB)
+            }
+        }
+        guard written == capacity else { throw ToolkitError.invalidInput("\(entry.name) is truncated or corrupt.") }
+        return output
+    }
+
+    static func readCentralDirectory(handle: FileHandle, fileSize: UInt64) throws -> [Entry] {
+        guard fileSize >= 22 else { throw ToolkitError.invalidInput("The file is not a valid package (too small).") }
+        let tailLength = min(fileSize, 65_557)
+        try handle.seek(toOffset: fileSize - tailLength)
+        var location = try directoryLocation(tail: try handle.read(upToCount: Int(tailLength)) ?? Data())
+        if let recordOffset = location.zip64RecordOffset {
+            try handle.seek(toOffset: recordOffset)
+            try applyZip64Record(try handle.read(upToCount: 56) ?? Data(), to: &location)
+        }
+        try checkLocation(location, fileSize: fileSize)
+        try handle.seek(toOffset: location.offset)
+        return try entries(directory: try handle.read(upToCount: Int(location.size)) ?? Data(), count: location.entryCount)
+    }
+
+    /// Parses `count` central-directory records.
+    public static func entries(directory: Data, count entryCount: UInt64) throws -> [Entry] {
         var entries: [Entry] = []
         var cursor = 0
         for _ in 0..<entryCount {

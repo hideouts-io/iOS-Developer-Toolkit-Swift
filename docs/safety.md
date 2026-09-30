@@ -15,8 +15,8 @@ explains private vulnerability reporting and what must never go into a public is
 |---|---|---|
 | Read-only | Device details, battery, lock state, app list | Runs immediately; the target is always visible |
 | Saves files on this Mac | Screenshot, crash reports, backup, capture | Review sheet with the destination; files are never overwritten |
-| Changes the device | Install or launch an app, set a location, mount or unmount the developer image | Type `RUN` and the last six characters of the target's UDID |
-| High impact | Restart, remove an app, erase a simulator | Confirm a current backup, then type `IRREVERSIBLE` and the same six characters |
+| Changes the device | Install or launch an app, set a location, mount or unmount the developer image, enter or leave recovery mode, update firmware | Type `RUN` and the last six characters of the target's UDID |
+| High impact | Restart, remove an app, erase a simulator, restore (erase and reinstall) firmware | Confirm a current backup, then type `IRREVERSIBLE` and the same six characters |
 
 The Command Palette and Actions list only what is available for the selected target and
 re-check eligibility when you run it. Advanced Mode classifies `devicectl` subcommands the same

@@ -109,6 +109,14 @@ struct CollectedLogTests {
             for try await chunk in CollectedLogs.stream(.dvt, target: phone, seconds: 30, artifact: trace, runner: runner) { dvtLines += chunk.lines }
             #expect(FileManager.default.fileExists(atPath: trace.path))
             #expect(dvtLines.contains { $0.message == "Launched Maps" && $0.timestamp != nil })
+
+            // Instruments may report run issues (exit 2) yet keep a usable trace: it is read, with a note.
+            runner.recordWithRunIssues = true
+            var withIssues: [LogLine] = []
+            for try await chunk in CollectedLogs.stream(.dvt, target: phone, seconds: 30, artifact: folder.appendingPathComponent("e.trace"), runner: runner) { withIssues += chunk.lines }
+            #expect(withIssues.contains { $0.message == "Launched Maps" })
+            #expect(withIssues.contains { $0.level == "note" && $0.message.contains("Run issues were detected") })
+            runner.recordWithRunIssues = false
         }
 
         // A refusal from `log collect` surfaces as a plain-language error.
@@ -123,6 +131,7 @@ struct CollectedLogTests {
 final class FakeToolRunner: CommandRunning, @unchecked Sendable {
     let exportedXML: Data
     var refuseCollect = false
+    var recordWithRunIssues = false
     let requests = LockedValue<[CommandRequest]>([])
     init(exportedXML: Data) { self.exportedXML = exportedXML }
 
@@ -138,6 +147,7 @@ final class FakeToolRunner: CommandRunning, @unchecked Sendable {
             if refuseCollect { code = 1; stderr = "log: Must be run as root" } else if let out = output(request) { try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true) }
         } else if args.contains("record"), let out = output(request) {
             try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+            if recordWithRunIssues { code = 2; stderr = "Run issues were detected (trace is still ready to be viewed):\n* [Error] Target failed to run" }
         } else if args.contains("--toc"), let out = output(request) {
             try Data("<trace-toc><run number=\"1\"><info><summary><start-date>2027-01-15T08:00:00.000Z</start-date></summary></info></run></trace-toc>".utf8).write(to: out)
         } else if args.contains("--xpath"), let out = output(request) {

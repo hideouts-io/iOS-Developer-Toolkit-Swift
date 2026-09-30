@@ -41,7 +41,7 @@ final class SmokeUITests: XCTestCase {
     }
 
     func testEveryWorkspaceOpens() throws {
-        let workspaces = ["overview", "device", "developerImage", "readiness", "apps", "installApp", "location", "liveLogs", "actions", "backup", "evidence", "externalTools", "activity", "help", "safety"]
+        let workspaces = ["overview", "device", "developerImage", "firmware", "readiness", "apps", "installApp", "location", "liveLogs", "actions", "backup", "evidence", "externalTools", "activity", "help", "safety"]
         for workspace in workspaces {
             let item = app.descendants(matching: .any)["sidebar-\(workspace)"]
             XCTAssertTrue(item.waitForExistence(timeout: 5), "Missing sidebar item \(workspace)")

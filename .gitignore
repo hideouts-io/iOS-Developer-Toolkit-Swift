@@ -43,6 +43,7 @@ location-events.jsonl
 *.cer
 *.dmg
 *.ipa
+*.ipsw
 *.mobileconfig
 *.trustcache
 BuildManifest.plist

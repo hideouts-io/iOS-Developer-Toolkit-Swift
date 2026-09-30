@@ -31,6 +31,7 @@ Instruments. It needs no Python, no Homebrew packages, and no administrator righ
 - [First steps](#first-steps)
 - [Workspaces](#workspaces)
 - [Developer images](#developer-images)
+- [Firmware](#firmware)
 - [Command-line tool](#command-line-tool)
 - [Security and privacy](#security-and-privacy)
 - [Troubleshooting](#troubleshooting)
@@ -47,6 +48,7 @@ Instruments. It needs no Python, no Homebrew packages, and no administrator righ
 | **Readiness Check** | A read-only check of every prerequisite (Xcode, the macOS device service, connection, trust, Developer Mode, Xcode's device service, developer services, Instruments, lock state, logging and backup services, Safari Web Inspector) with a next step for anything not ready. |
 | **Live Logs** | Unified Logging and classic syslog streamed from physical devices, and the simulator's unified log; plus two collected sources: an **OSLog archive** (the device's saved log history for a time window, kept as a `.logarchive` for Console) and **DVT logging** (os_log recorded through Instruments, kept as a `.trace`). Every byte is spooled and hashed; the view can be paused and filtered (literal or regex) without affecting capture. Mark findings, then export the raw capture, filtered lines, or an evidence bundle. |
 | **Location Lab** | Set a coordinate (offline world map, map-link parsing, nudges, saved places), move along a route at constant speed, or replay a GPX track. Always clearable; every change is logged. |
+| **Firmware** | Apple's firmware (IPSW) for the connected model with whether Apple still signs it; download with resume and SHA-1 verification; a local IPSW library; recovery and DFU mode; and Update (keeps data) or Restore (erases) with the bundled `idevicerestore`, after a check that changes nothing. |
 | **Apps** | Search and sort installed apps (with sizes over USB), launch, and remove with confirmation. |
 | **Install App** | Inspect an `.ipa` on the Mac first — contents, provisioning profile, and code signature verified with Security.framework — then install it on a device, or install an `.app` on a simulator. |
 | **Actions** | Over 40 guided actions (diagnostics, battery, IORegistry, provisioning and configuration profiles, crash reports, screenshots, sysdiagnose, Instruments recordings, packet capture, Bluetooth capture, Safari and web view tabs, network discovery, launch, open URL, simulated location, restart, simulator controls), each showing its risk, what it needs, and exactly how it runs. An Advanced Mode runs `devicectl` subcommands bound to the selected device. |
@@ -166,6 +168,9 @@ No device handy? Turn on **Device › Demo Mode** to explore every workspace wit
 - **Developer Image** — the developer image on the selected device (state, details, mount,
   unmount), how to mount it (automatic, Xcode's device service, or the built-in client), the
   images on this Mac and folders you add, and what is mounted on the device.
+- **Firmware** — the device and its mode (normal, recovery, or DFU), Apple's firmware for it and
+  its signing status, downloads, the IPSW library (add, check signing, verify, show in Finder,
+  move to the Trash), and installation.
 - **Readiness Check** — the read-only prerequisite check, a copyable report, and a local history
   of tested devices that can be exported as sanitized JSON or Markdown.
 - **Apps** — installed apps with search, sort, sizes, launch, and confirmed removal.
@@ -238,6 +243,36 @@ when it can reach the device on iOS 17 and later, and otherwise the built-in cli
 to the device's image-mounter service over USB and works without Xcode's device service. The app
 never downloads images from third parties.
 
+## Firmware
+
+The **Firmware** page (sidebar, under Device) installs iPhone and iPad firmware (IPSW files) the
+way Finder does, using `idevicerestore` and `irecovery` from the
+[libimobiledevice](https://libimobiledevice.org) project, bundled with the app as separate programs
+(see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
+
+- **Device and mode.** The selected iPhone or iPad, or a device in recovery or DFU mode (found
+  every few seconds while the page is open). **Enter Recovery Mode** and **Exit Recovery Mode**,
+  and step-by-step DFU instructions.
+- **Apple's firmware.** Apple's firmware list (`itunes.apple.com/check/version`, the one Finder
+  uses) gives the current firmware for the model, with Apple's SHA-1. **Check Signing** asks
+  Apple's signing server whether it still signs that build — reading only the build manifest from
+  Apple's server, and sending a random device ID, never the device's. **Download** saves the IPSW
+  to the library, continues an interrupted download where it stopped, and keeps the file only if
+  its SHA-1 matches Apple's.
+- **Library.** IPSW files in `~/Library/Application Support/iOS Developer Toolkit (Swift)/Firmware`.
+  Add your own, check signing, verify (SHA-1 and SHA-256), show in Finder, or move to the Trash.
+- **Install.** Choose an IPSW and **Update** (keeps apps and data) or **Restore** (erases the
+  device). **Check Before Installing** confirms the firmware is for this model, has the right
+  install type, is signed by Apple, and that the installer finds the device — without changing
+  anything. Update needs the typed `RUN` confirmation; Restore is high impact. Progress is shown
+  step by step; **Stop** works until the system starts being written, after which the install
+  always finishes, since stopping then would leave the device unusable. Logs are kept in the
+  library's `Logs` folder.
+
+During an install, Apple's signing server receives the device's chip, board, and ECID to sign
+the firmware for it, as with Finder. Firmware that Apple no longer signs cannot be installed.
+The app does not offer jailbreak-style exploits or downgrades.
+
 ## Command-line tool
 
 `idt` provides the automation-friendly parts of the app:
@@ -273,7 +308,9 @@ device could not be identified.
   and XML entities are rejected.
 - **Local only.** Nothing is uploaded, with one confirmed exception: mounting a developer image on
   iOS 17 and later asks Apple's signing server (`gs.apple.com`) to personalize it, sending the
-  device's chip, board, and ECID with a one-time nonce — as Xcode does. Captures, backups, cases, and reports are written with
+  device's chip, board, and ECID with a one-time nonce — as Xcode does. Installing firmware sends
+  the same kind of request, as Finder does; checking whether Apple signs a firmware uses a random
+  device ID. The Firmware page reads Apple's firmware list and downloads IPSWs from Apple. Captures, backups, cases, and reports are written with
   owner-only permissions. The app's own log records outcomes rather than device content, and marks
   identifiers as private.
 - **Sanitized sharing.** **iOS Developer Toolkit › Create Support Bundle…** and the readiness
@@ -291,6 +328,7 @@ device could not be identified.
 | Developer features say they need Xcode | Install Xcode, open it once, and check *Xcode › Settings › Locations › Command Line Tools*. |
 | The developer image will not mount | Read the Developer Image page: it names the problem (Developer Mode, lock, missing or incompatible image) and the fix. On iOS 17 and later keep the Mac online (Apple personalizes the image); if one route fails, switch **How to mount** on the Developer Image page. |
 | A backup stops with “must stay unlocked” | Unlock the device and keep it awake until the backup finishes. |
+| Firmware will not install | Run **Check Before Installing** on the Firmware page. Apple must still sign the firmware; keep the device connected by USB and the Mac online. If the device is left in recovery mode, install again with **Restore**. The log is in the library's `Logs` folder. |
 | An `.ipa` cannot be installed | Check the inspection: the signature must be valid and the profile must include the device. |
 | Live logs are very busy | Filter the view or pause it; capture continues in the background. |
 | Something else | Run the **Readiness Check**, then create a support bundle and open a discussion. |
@@ -314,6 +352,16 @@ xcodebuild -project iOSDeveloperToolkit.xcodeproj -scheme iOSDeveloperToolkit \
 scripts/build-release.sh                      # universal, ad-hoc-signed release ZIP, SBOM, checksums in build-output/release/
 ```
 
+The release includes the firmware helpers, which `scripts/build-release.sh` builds with
+`scripts/build-restore-helpers.sh` from pinned sources. That needs
+`brew install autoconf automake libtool pkg-config cmake`. To try the Firmware page from a
+development build, build the helpers once and point the app at them:
+
+```bash
+scripts/build-restore-helpers.sh
+open --env IDT_RESTORE_HELPERS="$PWD/build-output/restore-helpers/out/bin" "iOS Developer Toolkit (Swift).app"
+```
+
 The Xcode project is generated from `project.yml` with [XcodeGen](https://github.com/yonaskolb/XcodeGen)
 and committed, so you only need XcodeGen when you change the project structure (`xcodegen generate`).
 
@@ -321,6 +369,8 @@ Optional test suites:
 
 ```bash
 IDT_SIMULATOR_TESTS=1 swift test --filter RealSimulator   # boots a simulator end to end
+IDT_NETWORK_TESTS=1 IDT_RESTORE_HELPERS="$PWD/build-output/restore-helpers/out/bin" \
+  swift test --filter RealFirmware                        # Apple's firmware list, signing, the helpers
 xcodebuild -project iOSDeveloperToolkit.xcodeproj -scheme iOSDeveloperToolkit \
   -destination 'platform=macOS' test                      # UI tests (macOS asks to allow automation)
 ```
@@ -344,6 +394,10 @@ Version 1.0 is a native rewrite of the Python/PySide6 app ([iOS Developer Toolki
 `pymobiledevice3`. See [MIGRATION.md](MIGRATION.md) for the feature-by-feature mapping. Workspace
 profiles exported by 0.3.x can be imported in **Settings › Profiles**; the preview explains how each
 setting carries over.
+
+Firmware installation (Update, Restore, recovery and DFU mode) has been tested against Apple's
+servers and with the bundled helpers, but not yet by installing firmware on a device; see
+[MIGRATION.md](MIGRATION.md#10-firmware-ipsw-manager-and-installation).
 
 ### The Python app
 

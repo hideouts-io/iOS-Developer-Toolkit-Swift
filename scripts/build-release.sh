@@ -1,5 +1,7 @@
 #!/bin/bash
-# Builds a release of iOS Developer Toolkit, locally or in CI. Needs only Xcode.
+# Builds a release of iOS Developer Toolkit, locally or in CI. Needs Xcode, plus autoconf,
+# automake, libtool, pkg-config, and cmake for the firmware helpers (see
+# scripts/build-restore-helpers.sh; a build is reused while that script is unchanged).
 #
 #   scripts/build-release.sh [VERSION] [OUTPUT_DIR]
 #
@@ -10,11 +12,16 @@
 # Produces, in OUTPUT_DIR:
 #   iOS-Developer-Toolkit-Swift-VERSION-macOS-universal.zip  the app (arm64 + x86_64), ad-hoc signed
 #                                                      with the hardened runtime; idt is at
-#                                                      Contents/MacOS/idt and dependency licenses,
+#                                                      Contents/MacOS/idt, the firmware helpers
+#                                                      (idevicerestore, irecovery) are in
+#                                                      Contents/Helpers, and dependency licenses,
 #                                                      notices, and the SBOM are in
 #                                                      Contents/Resources/Licenses
 #   iOS-Developer-Toolkit-Swift-VERSION.spdx.json            SPDX 2.3 SBOM from Package.resolved
-#   SHA256SUMS.txt                                     checksums of both files
+#   iOS-Developer-Toolkit-Swift-VERSION-firmware-helpers-source.tar.gz
+#                                                      the complete source of the bundled firmware
+#                                                      helpers and the script that builds them
+#   SHA256SUMS.txt                                     checksums of these files
 set -euo pipefail
 
 fail() { echo "build-release: $*" >&2; exit 1; }
@@ -53,6 +60,7 @@ trap 'rm -rf "$WORK"' EXIT
 NAME="iOS-Developer-Toolkit-Swift-$VERSION"
 ZIP="$OUT/$NAME-macOS-universal.zip"
 SBOM="$OUT/$NAME.spdx.json"
+HELPER_SOURCE="$OUT/$NAME-firmware-helpers-source.tar.gz"
 ENTITLEMENTS="App/iOSDeveloperToolkit/iOSDeveloperToolkit.entitlements"
 
 step "Xcode: $(xcodebuild -version | tr '\n' ' ')"
@@ -75,6 +83,29 @@ fi
 BIN="$(swift build -c release --product idt --arch arm64 --arch x86_64 --scratch-path "$CACHE/spm" --show-bin-path)"
 cp "$BIN/idt" "$APP/Contents/MacOS/idt"
 
+step "Firmware helpers (idevicerestore, irecovery)"
+HELPERS="$ROOT/build-output/restore-helpers/out"
+helper_stamp="$(shasum -a 256 scripts/build-restore-helpers.sh | cut -d' ' -f1)"
+if [[ "$(cat "$HELPERS/STAMP" 2>/dev/null)" != "$helper_stamp" ]]; then
+    if ! scripts/build-restore-helpers.sh "$HELPERS" > "$WORK/helpers-build.log" 2>&1; then
+        tail -60 "$WORK/helpers-build.log" >&2
+        fail "the firmware helpers did not build (output above)"
+    fi
+fi
+# The helpers' complete source, as the LGPL asks of anyone distributing them.
+HELPER_SRC="$ROOT/build-output/restore-helpers/src"
+mkdir -p "$WORK/helper-source/firmware-helpers-source"
+for repo in "$HELPER_SRC"/*/.git; do
+    name="$(basename "$(dirname "$repo")")"
+    git -C "$HELPER_SRC/$name" archive --format=tar --prefix="$name/" HEAD | tar -x -C "$WORK/helper-source/firmware-helpers-source"
+done
+cp "$HELPER_SRC"/openssl-*.tar.gz scripts/build-restore-helpers.sh "$HELPERS/SOURCES.txt" "$WORK/helper-source/firmware-helpers-source/"
+tar -czf "$HELPER_SOURCE" -C "$WORK/helper-source" firmware-helpers-source
+mkdir -p "$APP/Contents/Helpers"
+for helper in idevicerestore irecovery; do
+    cp "$HELPERS/bin/$helper" "$APP/Contents/Helpers/$helper"
+done
+
 step "Adding licenses, notices, and the SBOM"
 LICENSES="$APP/Contents/Resources/Licenses"
 mkdir -p "$LICENSES"
@@ -92,27 +123,47 @@ for identity in $(sed -n 's/.*"identity" : "\(.*\)".*/\1/p' Package.resolved); d
     done
     [[ "$found" == 1 ]] || fail "no license file found for $identity"
 done
+mkdir -p "$LICENSES/restore-helpers"
+cp -R "$HELPERS/licenses/." "$LICENSES/restore-helpers/"
+cp "$HELPERS/SOURCES.txt" "$LICENSES/restore-helpers/SOURCES.txt"
 xcrun swift scripts/generate-sbom.swift Package.resolved "$CACHE/spm/checkouts" "$VERSION" "$COMMIT" "$SBOM"
 cp "$SBOM" "$LICENSES/sbom.spdx.json"
 
 step "Signing (ad hoc, hardened runtime)"
 codesign --force --sign - --options runtime --timestamp=none \
     --identifier io.hideouts.iOSDeveloperToolkit.idt "$APP/Contents/MacOS/idt"
+for helper in idevicerestore irecovery; do
+    codesign --force --sign - --options runtime --timestamp=none \
+        --identifier "io.hideouts.iOSDeveloperToolkit.$helper" "$APP/Contents/Helpers/$helper"
+done
 codesign --force --sign - --options runtime --timestamp=none \
     --entitlements "$ENTITLEMENTS" "$APP"
+
+# The libraries a binary links. otool reads a path ending in "(…)" as an archive member, so the
+# app's executable ("… (Swift)") is read through a link with a plain name.
+linked_libraries() {
+    local link="$WORK/otool-target"
+    ln -sf "$1" "$link"
+    otool -L "$link" | grep -v ':$' | awk '{print $1}'
+    rm -f "$link"
+}
 
 verify_app() {
     local app="$1"
     codesign --verify --deep --strict "$app" || fail "codesign verification failed for $app"
     local details
-    for binary in "$app/Contents/MacOS/iOS Developer Toolkit (Swift)" "$app/Contents/MacOS/idt"; do
+    for binary in "$app/Contents/MacOS/iOS Developer Toolkit (Swift)" "$app/Contents/MacOS/idt" "$app/Contents/Helpers/idevicerestore" "$app/Contents/Helpers/irecovery"; do
         details="$(codesign --display --verbose=2 "$binary" 2>&1)"
         grep -q 'Signature=adhoc' <<<"$details" || fail "$(basename "$binary") is not ad-hoc signed"
         grep -Eq 'flags=0x[0-9a-f]+\(.*runtime' <<<"$details" || fail "$(basename "$binary") lacks the hardened runtime"
         local archs
         archs="$(lipo -archs "$binary")"
         [[ " $archs " == *" arm64 "* && " $archs " == *" x86_64 "* ]] || fail "$(basename "$binary") is not universal ($archs)"
-        if otool -L "$binary" | grep -qi python; then fail "$(basename "$binary") links Python"; fi
+        local libraries
+        libraries="$(linked_libraries "$binary")" || fail "otool could not read $(basename "$binary")"
+        [[ -n "$libraries" ]] || fail "otool listed no libraries for $(basename "$binary")"
+        if grep -qi python <<<"$libraries"; then fail "$(basename "$binary") links Python"; fi
+        if grep -Eq '^(/opt/homebrew|/usr/local)/' <<<"$libraries"; then fail "$(basename "$binary") links a Homebrew library"; fi
     done
     local plist_version
     plist_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
@@ -122,8 +173,13 @@ verify_app() {
     [[ "$idt_version" == "$VERSION" ]] || fail "idt reports $idt_version, expected $VERSION"
     if [[ "$(uname -m)" == arm64 ]] && arch -x86_64 /usr/bin/true 2>/dev/null; then
         [[ "$(arch -x86_64 "$app/Contents/MacOS/idt" --version)" == "$VERSION" ]] || fail "the x86_64 slice of idt does not run"
+        arch -x86_64 "$app/Contents/Helpers/idevicerestore" --version | grep -q '^idevicerestore ' || fail "the x86_64 slice of idevicerestore does not run"
     fi
     [[ -f "$app/Contents/Resources/Licenses/swift-nio-ssl/NOTICE.txt" ]] || fail "license notices are missing"
+    [[ -f "$app/Contents/Resources/Licenses/restore-helpers/idevicerestore/COPYING" && -f "$app/Contents/Resources/Licenses/restore-helpers/SOURCES.txt" ]] \
+        || fail "the firmware helpers' licenses are missing"
+    "$app/Contents/Helpers/idevicerestore" --version | grep -q '^idevicerestore ' || fail "idevicerestore does not run"
+    "$app/Contents/Helpers/irecovery" --version | grep -q '^irecovery ' || fail "irecovery does not run"
 }
 
 step "Verifying the signed app"
@@ -131,7 +187,7 @@ verify_app "$APP"
 
 step "Packaging"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
-(cd "$OUT" && shasum -a 256 "$(basename "$ZIP")" "$(basename "$SBOM")" > SHA256SUMS.txt)
+(cd "$OUT" && shasum -a 256 "$(basename "$ZIP")" "$(basename "$SBOM")" "$(basename "$HELPER_SOURCE")" > SHA256SUMS.txt)
 
 step "Verifying the ZIP"
 mkdir "$WORK/unzipped"

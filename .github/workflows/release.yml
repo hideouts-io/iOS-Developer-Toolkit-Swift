@@ -17,13 +17,20 @@ jobs:
   build:
     name: Build universal app
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
       - name: Select Xcode
         run: scripts/ci-select-xcode.sh
       - name: Test before packaging
         run: swift test -Xswiftc -warnings-as-errors
+      - name: Install the firmware helpers' build tools
+        run: brew install autoconf automake libtool pkg-config cmake
+      - name: Reuse the firmware helpers built from the same pinned sources
+        uses: actions/cache@v6
+        with:
+          path: build-output/restore-helpers
+          key: restore-helpers-${{ hashFiles('scripts/build-restore-helpers.sh') }}-${{ env.XCODE_VERSION }}
       - name: Build, sign, and verify the release
         # Fails unless the tag (without "v") matches ToolkitVersion.current and MARKETING_VERSION.
         run: scripts/build-release.sh "${GITHUB_REF_NAME#v}" release-assets
@@ -56,6 +63,7 @@ jobs:
           zip="release-assets/iOS-Developer-Toolkit-Swift-$version-macOS-universal.zip"
           sbom="release-assets/iOS-Developer-Toolkit-Swift-$version.spdx.json"
           test -f "../$zip" && test -f "../$sbom"
+          test -f "iOS-Developer-Toolkit-Swift-$version-firmware-helpers-source.tar.gz"
           echo "zip=$zip" >> "$GITHUB_OUTPUT"
           echo "sbom=$sbom" >> "$GITHUB_OUTPUT"
       - name: Attest build provenance
@@ -75,4 +83,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --title "iOS Developer Toolkit $GITHUB_REF_NAME" \
             --generate-notes \
-            --notes "Universal (Apple silicon and Intel) macOS app, ad-hoc signed with the hardened runtime and not notarized. Verify SHA256SUMS.txt and the GitHub attestation before opening; see docs/release-verification.md."
+            --notes "Universal (Apple silicon and Intel) macOS app, ad-hoc signed with the hardened runtime and not notarized. Verify SHA256SUMS.txt and the GitHub attestation before opening; see docs/release-verification.md. The firmware helpers' complete source (idevicerestore and the libimobiledevice libraries, LGPL) is attached as firmware-helpers-source.tar.gz."

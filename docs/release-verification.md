@@ -7,9 +7,10 @@ a GitHub-hosted macOS runner:
 
 | File | Contents |
 |---|---|
-| `iOS-Developer-Toolkit-Swift-VERSION-macOS-universal.zip` | The app (arm64 + x86_64), ad-hoc signed with the hardened runtime, with `idt` in `Contents/MacOS` and dependency licenses in `Contents/Resources/Licenses` |
+| `iOS-Developer-Toolkit-Swift-VERSION-macOS-universal.zip` | The app (arm64 + x86_64), ad-hoc signed with the hardened runtime, with `idt` in `Contents/MacOS`, the firmware helpers (`idevicerestore`, `irecovery`) in `Contents/Helpers`, and dependency licenses in `Contents/Resources/Licenses` |
 | `SHA256SUMS.txt` | SHA-256 of every release file |
 | `iOS-Developer-Toolkit-Swift-VERSION.spdx.json` | SPDX 2.3 SBOM of the Swift package dependencies, generated from `Package.resolved` |
+| `iOS-Developer-Toolkit-Swift-VERSION-firmware-helpers-source.tar.gz` | The complete source of the bundled firmware helpers (pinned libimobiledevice projects, libzip, OpenSSL) and the script that builds them |
 
 GitHub build-provenance and SBOM attestations are published for the ZIP. The app is **not**
 notarized by Apple.

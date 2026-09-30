@@ -151,8 +151,14 @@ public enum CollectedLogs {
         let seconds = min(seconds, maximumDVTSeconds)
         continuation.yield(note("Recording os_log through Instruments (DVT) for \(Self.describe(seconds)). The lines appear when the recording ends."))
         let recorded = try await runner.run(try dvtRecordRequest(target: target, seconds: seconds, output: artifact))
-        guard recorded.succeeded, FileManager.default.fileExists(atPath: artifact.path) else {
+        // xctrace exits with status 2 when it saw run issues but still wrote a usable trace.
+        let usableWithIssues = recorded.exitCode == 2 && recorded.standardErrorText.localizedCaseInsensitiveContains("trace is still ready")
+        guard recorded.succeeded || usableWithIssues, FileManager.default.fileExists(atPath: artifact.path) else {
             throw ToolkitError(.commandFailed, message: "Instruments could not record from \(target.name).", recovery: target.kind == .simulator ? "Make sure the simulator is running, then try again." : "Turn on Developer Mode, mount the developer image (Developer Image page), keep the device unlocked, and try again.", technicalDetail: recorded.technicalSummary)
+        }
+        if usableWithIssues {
+            let issue = recorded.standardErrorText.split(whereSeparator: \.isNewline).first.map(String.init) ?? "Run issues were detected."
+            continuation.yield(note("Instruments reported a problem during the recording but kept it: \(issue.trimmingCharacters(in: .whitespaces))"))
         }
         continuation.yield(note("Saved the recording to \(artifact.path). Instruments can open it."))
         let work = try SecureFileIO.makeTemporaryDirectory(prefix: "dvt-export")

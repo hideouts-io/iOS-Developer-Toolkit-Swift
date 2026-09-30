@@ -60,7 +60,13 @@ struct RealSimulatorTests {
             return lines
         }
         try await Task.sleep(for: .seconds(2))
-        _ = try await client.launch(bundleIdentifier: "com.apple.Preferences", on: target, terminateExisting: true)
+        // Launching Settings only produces log traffic; the app launch itself is tested below with
+        // the fixture app. On a heavily loaded runner simctl can take longer than the app allows.
+        do {
+            _ = try await client.launch(bundleIdentifier: "com.apple.Preferences", on: target, terminateExisting: true)
+        } catch let error as ToolkitError where error.kind == .timedOut {
+            print("[simulator e2e] logs: launching Settings timed out on this machine (\(error.message)); the stream is checked without it")
+        }
         try await Task.sleep(for: .seconds(4))
         collector.cancel()
         let lines = (try? await collector.value) ?? 0

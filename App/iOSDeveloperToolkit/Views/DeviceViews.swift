@@ -10,6 +10,19 @@ struct OverviewView: View {
 
     var body: some View {
         WorkspacePage(workspace: .overview) {
+            HStack(spacing: 14) {
+                Image("Logo")
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 64, height: 64)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(ToolkitVersion.applicationName).font(.title2.bold())
+                    Text("Version \(ToolkitVersion.current)").font(.callout).foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("overview-logo")
             TargetHeader()
             if let device = model.selectedDevice {
                 NextStepCard(device: device)

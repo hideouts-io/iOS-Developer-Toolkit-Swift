@@ -362,6 +362,11 @@ scripts/build-restore-helpers.sh
 open --env IDT_RESTORE_HELPERS="$PWD/build-output/restore-helpers/out/bin" "iOS Developer Toolkit (Swift).app"
 ```
 
+The app icon and logo come from one image, `docs/brand/logo-source.png`:
+`xcrun swift scripts/generate-icons.swift` writes the app icon at every size, the in-app logo, and
+`docs/brand/` (`icon-1024.png`, `iOSDeveloperToolkitSwift.icns`, `logo-1024.png`, `logo-512.png`,
+`logo.svg`, and the repository's `social-preview.png`).
+
 The Xcode project is generated from `project.yml` with [XcodeGen](https://github.com/yonaskolb/XcodeGen)
 and committed, so you only need XcodeGen when you change the project structure (`xcodegen generate`).
 

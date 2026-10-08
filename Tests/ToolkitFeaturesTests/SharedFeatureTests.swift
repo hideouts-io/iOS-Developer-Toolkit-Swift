@@ -289,6 +289,18 @@ struct SharedFeatureTests {
         #expect(demo.name.contains("simulated"))
         #expect(LogStreamKind.available(for: demo.kind).isEmpty)
     }
+
+    @Test func groupedNavigationPreservesEverySavedWorkspaceRoute() throws {
+        let identifiers = ["overview", "device", "developerImage", "firmware", "readiness", "apps", "installApp", "location", "liveLogs", "actions", "backup", "evidence", "securityAnalysis", "externalTools", "activity", "help", "safety"]
+        #expect(Workspace.allCases.map(\.rawValue) == identifiers)
+        for identifier in identifiers {
+            let workspace = try #require(Workspace(rawValue: identifier))
+            let profile = WorkspaceProfile(name: "Saved route", defaultWorkspace: workspace)
+            #expect(try WorkspaceProfile.importing(profile.encoded()).profile.defaultWorkspace.rawValue == identifier)
+        }
+        #expect(Workspace.developerImage.sidebarWorkspace == .device)
+        #expect(Workspace.allCases.filter { $0 != .developerImage }.allSatisfy { $0.sidebarWorkspace == $0 })
+    }
 }
 
 @Suite("Guided reconnect")
@@ -319,11 +331,23 @@ struct KeyboardNavigationTests {
     @Test func workspacesCycleInSidebarOrder() {
         #expect(Workspace.overview.next == .device)
         #expect(Workspace.device.previous == .overview)
-        #expect(Workspace.allCases.last?.next == Workspace.allCases.first)
-        #expect(Workspace.overview.previous == Workspace.allCases.last)
-        for workspace in Workspace.allCases {
+        #expect(Workspace.device.next == .readiness)
+        #expect(Workspace.developerImage.next == .readiness)
+        #expect(Workspace.developerImage.previous == .overview)
+        #expect(Workspace.navigationOrder.last?.next == Workspace.navigationOrder.first)
+        #expect(Workspace.overview.previous == Workspace.navigationOrder.last)
+        for workspace in Workspace.navigationOrder {
             #expect(workspace.next.previous == workspace)
         }
+    }
+
+    @Test func sidebarKeepsThePythonOrderAndSwiftFeaturesReachable() {
+        #expect(Workspace.primaryWorkspaces == [.overview, .device, .readiness, .location, .liveLogs, .actions, .apps, .backup, .installApp, .evidence, .externalTools, .help, .safety])
+        #expect(Workspace.additionalWorkspaces == [.firmware, .securityAnalysis])
+        #expect(Workspace.sidebarWorkspaces == Workspace.primaryWorkspaces + Workspace.additionalWorkspaces)
+        #expect(Workspace.navigationOrder == Workspace.sidebarWorkspaces + [.activity])
+        #expect(Set(Workspace.navigationOrder).count == Workspace.navigationOrder.count)
+        #expect(Set(Workspace.navigationOrder) == Set(Workspace.allCases.filter { $0 != .developerImage }))
     }
 
     @Test func referenceListsTheMenuShortcuts() {
@@ -333,6 +357,7 @@ struct KeyboardNavigationTests {
             #expect(entries.contains { $0.keys == "⌘\(index + 1)" && $0.title == workspace.title })
         }
         #expect(Workspace.numbered.count == 9)
+        #expect(Workspace.numbered == [.overview, .device, .developerImage, .firmware, .readiness, .apps, .installApp, .location, .liveLogs])
         for keys in ["⌘K", "⌥⌘←", "⌥⌘→", "⌘R", "⇧⌘R", "⌘/"] {
             #expect(entries.contains { $0.keys == keys }, "\(keys)")
         }
@@ -367,12 +392,14 @@ struct ReadinessShortcutTests {
 
 @Suite("Developer Image page")
 struct DeveloperImagePageTests {
-    @Test func hasItsOwnPageNextToDevice() {
+    @Test func keepsItsLegacyPageInsideDeviceWorkspace() {
         let all = Workspace.allCases
         #expect(all.firstIndex(of: .developerImage) == all.firstIndex(of: .device)! + 1)
         #expect(Workspace.developerImage.group == .device)
         #expect(Workspace.developerImage.title == "Developer Image")
         #expect(Workspace(rawValue: "developerImage") == .developerImage)
+        #expect(Workspace.developerImage.sidebarWorkspace == .device)
+        #expect(!Workspace.sidebarWorkspaces.contains(.developerImage))
         // It is reachable by keyboard like every other page.
         #expect(KeyboardShortcutReference.sections.flatMap(\.entries).contains { $0.title == "Developer Image" })
     }

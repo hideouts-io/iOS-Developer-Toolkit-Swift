@@ -65,7 +65,7 @@ final class RunningOperation: Identifiable {
 final class AppModel {
     // MARK: Services
 
-    let runner: CommandRunning = ProcessCommandRunner()
+    let runner: OwnedCommandRunning = ProcessCommandRunner()
     let journal = OperationJournal()
     let discovery: DeviceDiscovery
     /// A fresh executor carries the current developer-image folders.
@@ -82,6 +82,8 @@ final class AppModel {
     /// The Actions page's category filter and selection (set by profiles and the command palette).
     var actionsCategory = "All"
     var selectedActionID: String?
+    /// Resets presentation filters after explicit navigation, even when saved values are unchanged.
+    var actionsNavigationID = UUID()
     var demoMode: Bool {
         didSet {
             UserDefaults.standard.set(demoMode, forKey: "demoMode")
@@ -112,6 +114,7 @@ final class AppModel {
     let apps: AppsModel
     let backup: BackupModel
     let evidence: EvidenceModel
+    let security: SecurityAnalysisModel
     let install: InstallModel
     let externalTools: ExternalToolsModel
 
@@ -141,6 +144,7 @@ final class AppModel {
         apps = AppsModel()
         backup = BackupModel()
         evidence = EvidenceModel()
+        security = SecurityAnalysisModel()
         install = InstallModel()
         externalTools = ExternalToolsModel()
         if let destination = arguments.firstIndex(of: "-workspace").flatMap({ arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil }).flatMap(Workspace.init(rawValue:)) {
@@ -179,6 +183,7 @@ final class AppModel {
         Task { await discovery.stop() }
         logs.stopAll()
         location.stopPlayback()
+        security.cancel()
     }
 
     private func apply(_ snapshot: DiscoverySnapshot) {
@@ -290,6 +295,7 @@ final class AppModel {
         if actionsCategory != "All" && actionsCategory != action.category { actionsCategory = "All" }
         selectedActionID = id
         workspace = .actions
+        actionsNavigationID = UUID()
     }
 
     func present(_ error: Error) {

@@ -107,9 +107,31 @@ public enum FirmwareInstall {
         case ecid(String)
     }
 
-    /// Builds the idevicerestore command. `preflightOnly` (`--no-action`) only finds the device and
-    /// reads its mode and model, then stops; nothing on the device is changed.
-    public static func request(helper: URL, ipsw: URL, mode: Mode, target: Target, cacheDirectory: URL, logFile: URL, preflightOnly: Bool) throws -> CommandRequest {
+    /// Finds the selected device and reads its mode and identity. The pinned helper exits before
+    /// checking firmware compatibility or signing; the validated plan performs those separately.
+    public static func preflightRequest(helper: URL, ipsw: URL, mode: Mode, target: Target, cacheDirectory: URL, logFile: URL) throws -> CommandRequest {
+        let arguments = try commandArguments(ipsw: ipsw, mode: mode, target: target, cacheDirectory: cacheDirectory, logFile: logFile)
+        return CommandRequest(executable: helper, arguments: arguments + ["--no-action", ipsw.path], timeout: 60, displayName: "idevicerestore (preflight)")
+    }
+
+    /// The only install command constructor consumes a validated plan. Pinning the exact variant
+    /// prevents the default Update mode's erase fallback in idevicerestore 60192e97f87d.
+    public static func request(plan: ValidatedFirmwareInstall, cacheDirectory: URL, logFile: URL, now: Date) throws -> CommandRequest {
+        try plan.requireCurrent(now: now)
+        guard let variant = plan.buildIdentity.variant else { throw ToolkitError.invalidInput("The validated firmware has no install variant.") }
+        let arguments = try commandArguments(ipsw: plan.selection.ipsw, mode: plan.selection.mode,
+                                             target: .ecid("0x" + String(plan.device.ecid, radix: 16)), cacheDirectory: cacheDirectory, logFile: logFile)
+        return CommandRequest(executable: plan.helper, arguments: arguments + ["--variant", variant, plan.selection.ipsw.path], timeout: nil,
+                              displayName: "idevicerestore (\(plan.selection.mode.rawValue))")
+    }
+
+    static func ecid(_ text: String) -> UInt64? {
+        let number = text.lowercased().hasPrefix("0x") ? UInt64(text.dropFirst(2), radix: 16) : UInt64(text, radix: 10)
+        guard let number, number > 0 else { return nil }
+        return number
+    }
+
+    private static func commandArguments(ipsw: URL, mode: Mode, target: Target, cacheDirectory: URL, logFile: URL) throws -> [String] {
         guard ipsw.pathExtension.lowercased() == "ipsw", FileManager.default.fileExists(atPath: ipsw.path) else {
             throw ToolkitError.invalidInput("Choose an .ipsw file.")
         }
@@ -119,13 +141,11 @@ public enum FirmwareInstall {
             guard udid.range(of: #"^[0-9A-Fa-f-]{24,40}$"#, options: .regularExpression) != nil else { throw ToolkitError.invalidInput("That is not a device UDID.") }
             arguments += ["--udid", udid]
         case .ecid(let ecid):
-            guard ecid.range(of: #"^(0x)?[0-9A-Fa-f]{1,16}$"#, options: .regularExpression) != nil else { throw ToolkitError.invalidInput("That is not a device ECID.") }
-            arguments += ["--ecid", ecid]
+            guard let number = Self.ecid(ecid) else { throw ToolkitError.invalidInput("That is not a nonzero decimal or hexadecimal device ECID.") }
+            arguments += ["--ecid", "0x" + String(number, radix: 16)]
         }
         if mode == .restore { arguments.append("--erase") }
-        if preflightOnly { arguments.append("--no-action") }
-        arguments.append(ipsw.path)
-        return CommandRequest(executable: helper, arguments: arguments, environment: CommandEnvironment.minimal(), timeout: nil, displayName: preflightOnly ? "idevicerestore (preflight)" : "idevicerestore (\(mode.rawValue))")
+        return arguments
     }
 
     /// The stages idevicerestore reports (`RESTORE_STEP_*`).
@@ -137,14 +157,14 @@ public enum FirmwareInstall {
     /// Parses a `--plain-progress` line: `progress: <step> <fraction>`.
     public static func progress(_ line: Substring) -> (step: String, fraction: Double)? {
         let parts = line.split(separator: " ")
-        guard parts.count == 3, parts[0] == "progress:", let step = Int(parts[1]), let fraction = Double(parts[2]) else { return nil }
+        guard parts.count == 3, parts[0] == "progress:", let step = Int(parts[1]), let fraction = Double(parts[2]), fraction.isFinite else { return nil }
         let name = steps.indices.contains(step) ? steps[step] : "Step \(step)"
         return (name, min(max(fraction, 0), 1))
     }
 
     /// Whether stopping now could leave the device unusable until it is restored again.
     public static func isPastPointOfNoReturn(step: String) -> Bool {
-        guard let index = steps.firstIndex(of: step) else { return false }
+        guard let index = steps.firstIndex(of: step) else { return true }
         return index >= 2
     }
 
@@ -176,17 +196,53 @@ extension RecoveryProbe {
 }
 
 extension FirmwareInstall {
-    /// Runs idevicerestore, reporting each progress step and every other output line. Throws a
-    /// plain-language error when it fails; stopping the task stops the helper.
-    public static func run(_ request: CommandRequest, runner: CommandRunning,
+    /// Owns the helper independently of cancellation of the application operation. Critical
+    /// cancellation is refused, and protection is released only when that helper has finished.
+    public static func run(plan: ValidatedFirmwareInstall, cacheDirectory: URL, logFile: URL, runner: OwnedCommandRunning, protection: FirmwareWriteProtection,
                            progress: @escaping @Sendable (_ step: String, _ fraction: Double) -> Void,
                            line: @escaping @Sendable (String) -> Void) async throws -> CommandResult {
+        defer { protection.complete() }
+        try Task.checkCancellation()
+        let request = try request(plan: plan, cacheDirectory: cacheDirectory, logFile: logFile, now: Date())
+        let cancellation = CommandCancellation()
+        let helperTask = Task {
+            defer { protection.complete() }
+            return try await consume(request, events: runner.stream(request, cancellation: cancellation), progress: { step, fraction in
+                protection.receiveProgress(step: step, fraction: fraction)
+                progress(step, fraction)
+            }, line: { output in
+                protection.receiveOutput(output)
+                line(output)
+            })
+        }
+        return try await withTaskCancellationHandler {
+            try await helperTask.value
+        } onCancel: {
+            if !protection.cancelBeforeWriting({ cancellation.cancel() }), protection.isCritical {
+                line("Firmware is being written. Stop and normal Quit are disabled until the installer exits.")
+            }
+        }
+    }
+
+    /// Streams one helper command. Internal so an application install cannot accept an arbitrary
+    /// command vector instead of a validated plan.
+    static func run(_ request: CommandRequest, runner: CommandRunning,
+                           progress: @escaping @Sendable (_ step: String, _ fraction: Double) -> Void,
+                           line: @escaping @Sendable (String) -> Void) async throws -> CommandResult {
+        try await consume(request, events: runner.stream(request), progress: progress, line: line)
+    }
+
+    private static func consume(_ request: CommandRequest, events: AsyncThrowingStream<CommandStreamEvent, Error>,
+                                progress: @escaping @Sendable (_ step: String, _ fraction: Double) -> Void,
+                                line: @escaping @Sendable (String) -> Void) async throws -> CommandResult {
         var output = LineSplitter(), errors = LineSplitter()
         var transcript: [String] = []
         func handle(_ lines: [Substring]) {
             for text in lines {
                 if let update = Self.progress(text) {
                     progress(update.step, update.fraction)
+                } else if text.hasPrefix("progress:") {
+                    progress("Unknown installer stage", 0)
                 } else if !text.trimmingCharacters(in: .whitespaces).isEmpty {
                     transcript.append(String(text))
                     if transcript.count > 2_000 { transcript.removeFirst(500) }
@@ -195,7 +251,7 @@ extension FirmwareInstall {
             }
         }
         var final: CommandResult?
-        for try await event in runner.stream(request) {
+        for try await event in events {
             switch event {
             case .standardOutput(let data): handle(output.consume(data))
             case .standardError(let data): handle(errors.consume(data))
@@ -239,13 +295,38 @@ public enum FirmwarePreflight {
             let supported = ipsw.supports(productType: productType)
             checks.append(Check(title: "Made for this model", passed: supported,
                                 detail: supported ? "\(ipsw.title) supports \(productType)." : "\(ipsw.title) is for \(ipsw.manifest.supportedProductTypes.joined(separator: ", ")), not \(productType)."))
+        } else {
+            checks.append(Check(title: "Device identity", passed: false, detail: "The device's product type is not known. Check the connected device before installing."))
         }
         let behavior = mode == .update ? "Update" : "Erase"
-        let identity = ipsw.manifest.identities.first { ($0.restoreBehavior == behavior) && (deviceClass == nil || $0.deviceClass?.lowercased() == deviceClass?.lowercased()) }
+        let identity = try? installIdentity(manifest: ipsw.manifest, productType: productType, deviceClass: deviceClass, chipID: nil, boardID: nil, mode: mode)
         checks.append(Check(title: mode == .update ? "Can update in place" : "Can restore",
                             passed: identity != nil,
-                            detail: identity != nil ? "The firmware has a \(behavior.lowercased()) install for this device." : "The firmware has no \(behavior.lowercased()) install for this device\(mode == .update ? "; use Restore instead" : "")."))
+                            detail: identity != nil ? "The firmware has a matching \(behavior.lowercased()) install for this device." : "A matching \(behavior.lowercased()) identity has not been established.\(mode == .update ? " Restore may be available, but Restore erases all data." : "")"))
         return checks
+    }
+
+    /// Mirrors the pinned helper's exact DeviceClass/variant selection and refuses duplicate
+    /// variants, missing board identity, and behavior mismatches rather than guessing an identity.
+    public static func installIdentity(manifest: FirmwareManifest, productType: String?, deviceClass: String?, chipID: Int?, boardID: Int?, mode: FirmwareInstall.Mode) throws -> FirmwareManifest.Identity {
+        guard let productType, manifest.supportedProductTypes.contains(productType) else {
+            throw ToolkitError.invalidInput("This firmware is not verified for the selected product type.")
+        }
+        guard let deviceClass, !deviceClass.isEmpty else {
+            throw ToolkitError.invalidInput("The device's board identity is unknown. Check the connected device before installing.")
+        }
+        let behavior = mode == .update ? "Update" : "Erase"
+        let variant = mode == .update ? "Customer Upgrade Install (IPSW)" : "Customer Erase Install (IPSW)"
+        let matches = manifest.identities.filter { $0.deviceClass?.lowercased() == deviceClass.lowercased() && $0.variant == variant }
+        guard matches.count == 1, let identity = matches.first, identity.restoreBehavior == behavior,
+              identity.chipID > 0, identity.boardID >= 0, identity.securityDomain > 0,
+              identity.uniqueBuildID?.isEmpty == false, !identity.manifest.isEmpty,
+              (chipID == nil || chipID == identity.chipID), (boardID == nil || boardID == identity.boardID),
+              (identity.values["Ap,ProductType"] == nil || identity.values["Ap,ProductType"]?.stringValue == productType) else {
+            throw ToolkitError(.invalidInput, message: mode == .update ? "Update is unavailable: this IPSW has no unambiguous data-preserving Update identity for this device." : "Restore is unavailable: this IPSW has no unambiguous erase identity for this device.",
+                               recovery: mode == .update ? "Restore may be available, but Restore erases all data and needs separate confirmation." : "Choose firmware for the exact device model and board.")
+        }
+        return identity
     }
 
     public static func signingCheck(_ status: FirmwareSigning.Status) -> Check {

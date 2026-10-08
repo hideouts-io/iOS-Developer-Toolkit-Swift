@@ -11,7 +11,7 @@ struct ContentView: View {
         @Bindable var model = model
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView()
-                .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 300)
         } detail: {
             VStack(spacing: 0) {
                 if model.selectedDevice?.kind == .demo {
@@ -21,7 +21,7 @@ struct ContentView: View {
                     // Zero ideal size: pages fill the window but can never make it grow.
                     .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, minHeight: 0, idealHeight: 0, maxHeight: .infinity)
             }
-            .navigationTitle(model.workspace.title)
+            .navigationTitle(model.workspace.sidebarWorkspace.title)
             .navigationSubtitle(model.selectedDevice.map { "\($0.name) · \($0.kind.label)" } ?? "No device selected")
             .toolbar { MainToolbar() }
         }
@@ -58,23 +58,57 @@ struct WorkspaceView: View {
     let workspace: Workspace
 
     var body: some View {
-        switch workspace {
-        case .overview: OverviewView()
-        case .device: DeviceDetailView()
-        case .developerImage: DeveloperImageView()
-        case .firmware: FirmwareView()
-        case .readiness: ReadinessView()
-        case .apps: AppsView()
-        case .installApp: InstallAppView()
-        case .location: LocationLabView()
-        case .liveLogs: LiveLogsView()
-        case .actions: ActionsView()
-        case .backup: BackupView()
-        case .evidence: EvidenceView()
-        case .externalTools: ExternalToolsView()
-        case .activity: ActivityView()
-        case .help: ToolReferenceView()
-        case .safety: SafetyView()
+        Group {
+            switch workspace {
+            case .overview: OverviewView()
+            case .device, .developerImage: DeviceAndDDIView()
+            case .firmware: FirmwareView()
+            case .readiness: ReadinessView()
+            case .apps: AppsView()
+            case .installApp: InstallAppView()
+            case .location: LocationLabView()
+            case .liveLogs: LiveLogsView()
+            case .actions: ActionsView()
+            case .backup: BackupView()
+            case .evidence: EvidenceView()
+            case .securityAnalysis: SecurityAnalysisView()
+            case .externalTools: ExternalToolsView()
+            case .activity: ActivityView()
+            case .help: ToolReferenceView()
+            case .safety: SafetyView()
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("workspace-\(workspace.rawValue)")
+    }
+}
+
+struct DeviceAndDDIView: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        VStack(spacing: 0) {
+            Picker("Device & DDI", selection: $model.workspace) {
+                Text("Device Information").tag(Workspace.device)
+                    .accessibilityIdentifier("device-section-device")
+                Text("Developer Image").tag(Workspace.developerImage)
+                    .accessibilityIdentifier("device-section-developerImage")
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("device-sections")
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+            if model.workspace == .developerImage {
+                DeveloperImageView()
+            } else {
+                DeviceDetailView()
+            }
+        }
+        .task(id: model.selectedDevice?.id) {
+            if let device = model.selectedDevice, device.kind == .demo {
+                await model.developerImage.refresh(device, app: model)
+            }
         }
     }
 }
@@ -85,23 +119,61 @@ struct SidebarView: View {
     var body: some View {
         @Bindable var model = model
         VStack(spacing: 0) {
-        List(selection: Binding(get: { model.workspace }, set: { if let value = $0 { model.workspace = value } })) {
-            ForEach(Workspace.Group.allCases, id: \.self) { group in
-                Section(group.rawValue) {
-                    ForEach(Workspace.allCases.filter { $0.group == group }) { workspace in
+            List(selection: Binding(get: { model.workspace.sidebarWorkspace }, set: { if let value = $0 { model.workspace = value } })) {
+                Section("Workspaces") {
+                    ForEach(Workspace.primaryWorkspaces) { workspace in
                         Label(workspace.title, systemImage: workspace.symbolName)
                             .tag(workspace)
+                            .accessibilityAddTraits(model.workspace.sidebarWorkspace == workspace ? .isSelected : [])
+                            .accessibilityIdentifier("sidebar-\(workspace.rawValue)")
+                            .help(workspace.subtitle)
+                    }
+                }
+                Section("Additional Swift Tools") {
+                    ForEach(Workspace.additionalWorkspaces) { workspace in
+                        Label(workspace.title, systemImage: workspace.symbolName)
+                            .tag(workspace)
+                            .accessibilityAddTraits(model.workspace.sidebarWorkspace == workspace ? .isSelected : [])
                             .accessibilityIdentifier("sidebar-\(workspace.rawValue)")
                             .help(workspace.subtitle)
                     }
                 }
             }
-        }
-        .modifier(SidebarListStyle())
-        // The list scrolls within whatever height remains; it must never set the window height.
-        .frame(minHeight: 0, idealHeight: 0, maxHeight: .infinity)
-        ConnectionSummaryView()
-            .padding(10)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("workspace-sidebar")
+            .modifier(SidebarListStyle())
+            // The list scrolls within whatever height remains; it must never set the window height.
+            .frame(minHeight: 0, idealHeight: 0, maxHeight: .infinity)
+            VStack(spacing: 8) {
+                HStack {
+                    Button { model.isCommandPalettePresented = true } label: {
+                        Label("Action Palette", systemImage: "command")
+                    }
+                    .accessibilityIdentifier("action-palette")
+                    .help("Search workspaces, commands, and devices (⌘K)")
+                    Spacer(minLength: 0)
+                }
+                HStack {
+                    Button { model.workspace = .activity } label: {
+                        Label("Session Activity", systemImage: Workspace.activity.symbolName)
+                    }
+                    .accessibilityIdentifier("sidebar-activity")
+                    .foregroundStyle(model.workspace == .activity ? Color.accentColor : Color.primary)
+                    Spacer(minLength: 0)
+                }
+                HStack {
+                    Button("Export Workspace") { model.statusMessage = WorkspaceProfileTransfer.exportProfile(model: model) }
+                        .accessibilityIdentifier("export-workspace")
+                    Button("Import Workspace") { model.statusMessage = WorkspaceProfileTransfer.importProfile(model: model) }
+                        .accessibilityIdentifier("import-workspace")
+                }
+                .font(.caption)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            ConnectionSummaryView()
+                .padding(10)
         }
     }
 }
@@ -162,12 +234,28 @@ struct MainToolbar: ToolbarContent {
             }
             .help("Look for devices again (⌘R)")
             .disabled(model.isRefreshing)
+            .accessibilityIdentifier("retry-scan")
             Button {
                 model.isCommandPalettePresented = true
             } label: {
-                Label("Command Palette", systemImage: "command")
+                Label("Action Palette", systemImage: "command")
             }
             .help("Search every workspace and action (⌘K)")
+            .accessibilityIdentifier("toolbar-action-palette")
+            Menu {
+                Button("Reconnect & Retry…") { model.isReconnectGuidePresented = true }
+                    .accessibilityIdentifier("reconnect-guide")
+                Toggle("Demo Mode", isOn: Binding(get: { model.demoMode }, set: { model.demoMode = $0 }))
+                    .accessibilityIdentifier("demo-mode-toggle")
+                Divider()
+                Button("Keyboard Shortcuts") { model.isShortcutReferencePresented = true }
+                    .accessibilityIdentifier("keyboard-help")
+                Button("Create Support Bundle…") { SupportBundleExporter.export(model: model) }
+                    .accessibilityIdentifier("create-support-bundle")
+            } label: {
+                Label("Workspace Controls", systemImage: "ellipsis.circle")
+            }
+            .accessibilityIdentifier("workspace-controls")
         }
     }
 }
@@ -244,6 +332,7 @@ struct OperationsButton: View {
             }
         }
         .help("Running operations")
+        .accessibilityIdentifier("running-operations")
         .accessibilityLabel("\(model.operations.count) running operations")
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 12) {

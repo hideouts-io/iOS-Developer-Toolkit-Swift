@@ -9,7 +9,8 @@ App/iOSDeveloperToolkit (SwiftUI views and view state)      Sources/idt (command
                  └──────────────► ToolkitFeatures ◄────────────────────┘
                                   Location Lab, IPA inspection, live-log capture and findings,
                                   actions and their safety policy, readiness, evidence
-                                  collection, external tools, profiles, support bundle
+                                  collection, local security analysis, external tools,
+                                  profiles, support bundle
                                         │
                                   DeviceKit
                                   usbmuxd client · lockdown client and services ·
@@ -61,8 +62,10 @@ Firmware support lives in `Sources/ToolkitFeatures/Firmware`:
 |---|---|
 | `FirmwareCatalog` | Apple's firmware list (`itunes.apple.com/check/version`), cached for a day |
 | `FirmwareManifest`, `FirmwareSigning` | `BuildManifest.plist` build identities; the AP signing request built as libtatsu builds it, with a random ECID and nonce, to learn whether Apple signs a build |
-| `RemoteArchive`, `IPSWLibrary`, `FirmwareDownloader` | One file from a remote IPSW by HTTP range requests; the local library, SHA-1/SHA-256; resumable, verified downloads |
+| `RemoteArchive`, `IPSWLibrary`, `FirmwareDownloader` | One file from a remote IPSW by HTTP range requests; the local library, SHA-1/SHA-256; resumable downloads with typed catalog-match, unavailable-digest and mismatch outcomes |
 | `RestoreHelper`, `RecoveryProbe`, `FirmwareInstall`, `FirmwarePreflight` | The bundled `idevicerestore` and `irecovery` (separate LGPL programs in `Contents/Helpers`, built by `scripts/build-restore-helpers.sh`): locating them, recovery/DFU detection, install command vectors, progress, failure explanations, and the checks made before installing |
+| `ValidatedFirmwareInstall` | Immutable mandatory validation for the confirmed file, exact device, mode and manifest identity; fresh TSS and `--no-action`, file/helper identity and validation time. Install commands consume the plan and pin ECID/variant |
+| `FirmwareWriteProtection` | Per-install synchronized critical state, cancellation refusal and balanced ProcessInfo sudden-termination calls; AppDelegate consults it synchronously for quit and last-window-close decisions |
 
 The helpers are the one place the app runs third-party programs it ships; see
 [MIGRATION.md](../MIGRATION.md#10-firmware-ipsw-manager-and-installation) for why.
@@ -75,6 +78,27 @@ name for the Session Activity log. The runner never uses a shell. Every run can 
 drains output without deadlocks, and returns a typed result. Timeouts, non-zero exits, and
 cancellation surface as `ToolkitError`. External tools (MVT, UFADE, idb Companion) are
 validated by path and SHA-256 before they run.
+
+Firmware uses the runner's owned stream: a `CommandCancellation` signals the child without
+cancelling the output consumer. The app keeps consuming until actual helper exit before
+releasing firmware termination protection, including cancellation and failure exits.
+
+## Security Analysis
+
+Security Analysis is a local pipeline in `Sources/ToolkitFeatures/Security`. The SwiftUI model
+selects evidence and intelligence, then starts a cancellable detached task. Package code owns the
+complete analysis boundary:
+
+| Component | Responsibility |
+|---|---|
+| `SecurityEvidenceAcquisition` | Reads a decrypted backup through `Manifest.db` in immutable SQLite mode, or a safely contained sysdiagnose/file tree. It rejects symbolic links and traversal and enforces file, byte, and SQLite-row limits. |
+| `ThreatIntelligence` | Strictly validates generic JSON and the supported STIX 2 equality/OR subset; unsupported patterns remain explicit warnings. Every indicator carries source, version or commit, retrieval time, and SHA-256 provenance. |
+| `SecurityAnalysisEngine` | Matches supported observables, normalizes existing MVT `*_detected.json` output, records scanner failures and acquisition gaps, and correlates findings without claiming that a non-detection proves a clean device. |
+| `TrustedIntelligenceSources` | On explicit user request only, resolves one of the listed HTTPS sources to a commit, retries bounded requests, verifies integrity, and writes an owner-only cache. Evidence is never sent to those sources. |
+| `SecurityReporting` | Creates owner-only, no-overwrite JSON, CSV, and self-contained HTML reports with scanner, acquisition, IOC, coverage, and false-positive context. |
+
+`CSQLite` is a thin module-map target for the SQLite library shipped with macOS. No SQLite code is
+bundled in the application.
 
 ## Errors and logging
 

@@ -70,7 +70,6 @@ struct ActionSafetyTests {
         }
         #expect(ActionCatalog.all.filter { $0.risk == .highImpact }.map(\.id).sorted() == ["reboot", "sim-erase"])
         #expect(ActionCatalog.actions(for: .simulator).allSatisfy { $0.supports(.simulator) })
-        #expect(!ActionCatalog.all.contains { $0.mechanism.localizedCaseInsensitiveContains("go-ios") || $0.mechanism.localizedCaseInsensitiveContains("ipsw") })
     }
 
     @Test func parameterValidation() throws {

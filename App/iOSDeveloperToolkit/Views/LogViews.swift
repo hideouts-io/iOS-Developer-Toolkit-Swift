@@ -11,6 +11,10 @@ struct LiveLogsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             TargetHeader(allowedKinds: [.physical, .simulator])
+            Text("Unified Logs and Classic Syslog stream until stopped. DVT OSLog records for a bounded time through Instruments; direct DVT OSLog streaming is unavailable in this edition.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             if let device = model.selectedDevice {
                 let kinds = LogStreamKind.available(for: device.kind)
                 let live = kinds.filter { !$0.isCollected }
@@ -38,7 +42,7 @@ struct LiveLogsView: View {
                         .help("OSLog Archive collects this much saved history; DVT Logging records for this long.")
                         .accessibilityIdentifier("collection-window")
                         ForEach(collected) { kind in
-                            startButton(kind, device: device, label: kind == .osLogArchive ? "Collect OSLog Archive" : "Record DVT Logging", symbol: kind == .osLogArchive ? "tray.and.arrow.down" : "record.circle")
+                            startButton(kind, device: device, label: kind == .osLogArchive ? "Collect OSLog Archive" : "Record DVT OSLog", symbol: kind == .osLogArchive ? "tray.and.arrow.down" : "record.circle")
                         }
                         Spacer()
                     }

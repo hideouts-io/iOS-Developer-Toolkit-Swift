@@ -4,7 +4,7 @@
   <img src="App/iOSDeveloperToolkit/Assets.xcassets/Logo.imageset/logo.png" width="200" alt="iOS Developer Toolkit (Swift) logo">
 </p>
 
-**A native macOS app for working with iPhones, iPads, and simulators — device information, live logs, location simulation, app installs, backups, packet capture, readiness checks, and documented evidence collection.**
+**A native macOS app for working with iPhones, iPads, and simulators — device information, live logs, location simulation, app installs, backups, packet capture, readiness checks, documented evidence collection, and local security analysis.**
 
 [![CI](https://github.com/hideouts-io/iOS-Developer-Toolkit-Swift/actions/workflows/ci.yml/badge.svg)](https://github.com/hideouts-io/iOS-Developer-Toolkit-Swift/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/hideouts-io/iOS-Developer-Toolkit-Swift?display_name=tag)](https://github.com/hideouts-io/iOS-Developer-Toolkit-Swift/releases/latest)
@@ -48,12 +48,13 @@ Instruments. It needs no Python, no Homebrew packages, and no administrator righ
 | **Readiness Check** | A read-only check of every prerequisite (Xcode, the macOS device service, connection, trust, Developer Mode, Xcode's device service, developer services, Instruments, lock state, logging and backup services, Safari Web Inspector) with a next step for anything not ready. |
 | **Live Logs** | Unified Logging and classic syslog streamed from physical devices, and the simulator's unified log; plus two collected sources: an **OSLog archive** (the device's saved log history for a time window, kept as a `.logarchive` for Console) and **DVT logging** (os_log recorded through Instruments, kept as a `.trace`). Every byte is spooled and hashed; the view can be paused and filtered (literal or regex) without affecting capture. Mark findings, then export the raw capture, filtered lines, or an evidence bundle. |
 | **Location Lab** | Set a coordinate (offline world map, map-link parsing, nudges, saved places), move along a route at constant speed, or replay a GPX track. Always clearable; every change is logged. |
-| **Firmware** | Apple's firmware (IPSW) for the connected model with whether Apple still signs it; download with resume and SHA-1 verification; a local IPSW library; recovery and DFU mode; and Update (keeps data) or Restore (erases) with the bundled `idevicerestore`, after a check that changes nothing. |
+| **Firmware** | Apple's firmware (IPSW) for the connected model; resumable downloads with catalog SHA-1 comparison when available; a local library; recovery and DFU mode; and Update (keeps data) or Restore (erases) with bundled `idevicerestore`, gated by fresh checks for the exact file, device and install identity. |
 | **Apps** | Search and sort installed apps (with sizes over USB), launch, and remove with confirmation. |
 | **Install App** | Inspect an `.ipa` on the Mac first — contents, provisioning profile, and code signature verified with Security.framework — then install it on a device, or install an `.app` on a simulator. |
 | **Actions** | Over 40 guided actions (diagnostics, battery, IORegistry, provisioning and configuration profiles, crash reports, screenshots, sysdiagnose, Instruments recordings, packet capture, Bluetooth capture, Safari and web view tabs, network discovery, launch, open URL, simulated location, restart, simulator controls), each showing its risk, what it needs, and exactly how it runs. An Advanced Mode runs `devicectl` subcommands bound to the selected device. |
 | **Backup** | Encrypted local backups with the same protocol Finder uses, full or incremental, with progress. Turn on backup encryption with a new password (never stored or logged). |
 | **Evidence Capture** | A documented case folder with snapshots, optional timed streams (Unified Logs, syslog, packet capture), a screenshot, and crash reports, plus a manifest and SHA-256 hashes. Failed steps are recorded as coverage gaps. |
+| **Security Analysis** | Analyze a decrypted backup, unpacked sysdiagnose, local file or folder, or existing MVT results against attributable JSON/STIX intelligence. Correlate investigative leads and export owner-only JSON, CSV, or HTML reports. Evidence stays local; a non-detection is never presented as proof that a device is clean. |
 | **Packet capture** | Device-side network packets written as a standard `.pcap` file for Wireshark or tcpdump, as an action or as part of Evidence Capture. |
 | **External tools** | Optional handoffs to separately installed [MVT](https://github.com/mvt-project/mvt), [UFADE](https://github.com/prosch88/UFADE), and [idb Companion](https://github.com/facebook/idb), validated by path and SHA-256. |
 | **Session Activity** | Everything run in this session, with exportable manifests (output hashes, never raw output). |
@@ -152,7 +153,7 @@ See [Build from source](#build-from-source).
 4. **Turn on Developer Mode if needed** (iOS 16+): *Settings › Privacy & Security › Developer
    Mode*, then restart and confirm. **Device › Developer Mode Guide** walks through it.
 5. **Mount the developer image** for screenshots, location simulation, and launching apps: the
-   **Developer Image** page (in the sidebar, under Device) shows its state; click **Mount Developer Image**.
+   **Developer Image** section within **Device & DDI** shows its state; click **Check Again**, then **Mount Developer Image**.
    See [Developer images](#developer-images).
 6. **Clean up** when finished: stop streams and clear simulated locations. Quitting the app
    clears a location this session simulated.
@@ -161,35 +162,49 @@ No device handy? Turn on **Device › Demo Mode** to explore every workspace wit
 
 ## Workspaces
 
-- **Overview** — status of the selected device, a suggested next step, and entry points.
-- **Device** — identity and status with explanations, a summary of the developer image, Apple developer tool handoffs (open a project in Xcode, open an `.xcresult` or
-  `.trace`, list Remote Virtual Interfaces), simulator controls, raw records, and connection
-  diagnostics.
-- **Developer Image** — the developer image on the selected device (state, details, mount,
-  unmount), how to mount it (automatic, Xcode's device service, or the built-in client), the
-  images on this Mac and folders you add, and what is mounted on the device.
-- **Firmware** — the device and its mode (normal, recovery, or DFU), Apple's firmware for it and
-  its signing status, downloads, the IPSW library (add, check signing, verify, show in Finder,
-  move to the Trash), and installation.
-- **Readiness Check** — the read-only prerequisite check, a copyable report, and a local history
-  of tested devices that can be exported as sanitized JSON or Markdown.
-- **Apps** — installed apps with search, sort, sizes, launch, and confirmed removal.
-- **Install App** — inspect an `.ipa` (or choose a simulator `.app`), see whether the device is in
-  the provisioning profile, then install.
-- **Location Lab** — coordinates, map, saved places (stored only on this Mac), routes, GPX playback.
-  Location events are appended to `~/Documents/iOS Developer Toolkit (Swift) Location Logs/location-events.jsonl`.
-- **Live Logs** — several concurrent streams; pop out any stream into its own window.
-- **Actions** — the guided action catalog and Advanced Mode.
-- **Backup** — encryption status and setup, full or incremental backups.
-- **Evidence Capture** — optional guided case intake (title, purpose, authorization), collection,
-  and a summary of every step.
-- **External Tools** — MVT, UFADE, and idb Companion.
-- **Session Activity**, **Tool Reference**, **Scope & Safety** — history, built-in tool help, and
-  the app's boundaries.
+The main sidebar follows the Python edition's workspace names and order. Existing workspace
+identifiers remain compatible with profiles and launch arguments.
 
-Press **⌘K** for the command palette, **⌘R** to refresh devices, **⇧⌘R** to run the Readiness
-Check, **⌘1–⌘9** to switch workspaces, and **⌥⌘←** / **⌥⌘→** for the previous or next
-workspace. **Help › Keyboard Shortcuts** (**⌘/**) lists them all.
+1. **Home** — selected-device status, suggested next steps, and workspace shortcuts.
+2. **Device & DDI** — Device Information and Developer Image sections: identity, connection
+   diagnostics, Developer Mode, local/Xcode images, mount/unmount, and Apple tool handoffs.
+   Choose **Check Again** to read DDI state; opening the workspace does not query the device.
+3. **Capability Matrix** — **Current Device** prerequisite checks and **Real-Device Compatibility**
+   history with sanitized JSON/Markdown export. Checks run only when requested.
+4. **Location Lab** — offline map, coordinates, saved places, repeated routes, and GPX playback.
+5. **Live Logs** — Unified Logs and Classic Syslog streams; bounded **DVT OSLog** recordings
+   through Instruments, OSLog archives, and simulator logs. Sessions can open in separate windows.
+6. **Command Center** — native guided commands under six familiar categories, plus Simulator
+   extras, with parameters, prerequisite checks, previews, confirmations, and Advanced Mode.
+7. **Installed Apps** — explicit inventory loading, search, sort, sizes, launch, and confirmed removal.
+8. **Backup** — **MobileBackup2**, **UFADE External**, and **MVT Analysis** sections. The latter
+   two validate separately installed tools and retain their existing consent/confirmation flows.
+9. **Sideload IPA** — inspect an IPA or simulator app before eligible installation.
+10. **Evidence Capture** — guided case intake, collection, hashes, and coverage results.
+11. **Ecosystem Tools** — validate Meta idb Companion and run its bounded inventory probe.
+12. **Man Pages** — installed help for Apple's devicectl, simctl, and xctrace, with command handoff.
+13. **Scope & Safety** — supported access, confirmations, privacy, and interpretation limits.
+
+**Additional Swift Tools** keeps **Firmware** and **Security Analysis** directly accessible.
+Firmware retains its library, signing checks, and confirmed installation; recovery/DFU watching
+and Apple catalog checks require explicit controls. Security Analysis retains its local evidence,
+indicators, correlated findings, coverage, and reports.
+
+Below the workspace list are **Action Palette**, **Session Activity**, **Export Workspace**, and
+**Import Workspace**. The toolbar holds device selection, retry scan, the palette, and **Workspace
+Controls** for reconnect, Demo Mode, keyboard help, and support bundles. Import changes defaults
+only and retains its preview and confirmation.
+
+The navigation milestone does not add Python backends: the 46 native commands are not the
+Python edition's 49 presets; direct Python DVT service streams/path listing and its downloaded
+personalized-DDI cache workflows are absent. Instruments recordings provide the existing DVT
+telemetry. Bluetooth captures use native PacketLogger `.pklg` rather than Python PCAPNG.
+Man Pages uses installed Apple help rather than the Python 59-entry help inventory.
+
+Press **⌘K** for the palette, **⌘R** to refresh devices, and **⇧⌘R** for an explicit readiness check.
+The original **⌘1–⌘9** assignments remain: Home, Device Information, Developer Image, Firmware,
+Capability Matrix, Installed Apps, Sideload IPA, Location Lab, and Live Logs. **⌥⌘←** / **⌥⌘→**
+follow the new sidebar order and Session Activity. **Help › Keyboard Shortcuts** (**⌘/**) lists them.
 
 ### How changes are confirmed
 
@@ -207,8 +222,8 @@ that the device answering is the one you selected.
 ## Developer images
 
 Screenshots, location simulation, launching apps, and Instruments need Apple's developer image
-(Developer Disk Image) mounted on the device. The **Developer Image** page (sidebar, under Device)
-checks it automatically and shows one of these states; the Device page shows a summary:
+(Developer Disk Image) mounted on the device. In **Device & DDI › Developer Image**, **Check Again**
+reads its state and shows one of these results; Device Information shows a summary:
 
 [![Developer image card](docs/screenshots/developer-image.png)](docs/screenshots/developer-image.png)
 
@@ -245,29 +260,34 @@ never downloads images from third parties.
 
 ## Firmware
 
-The **Firmware** page (sidebar, under Device) installs iPhone and iPad firmware (IPSW files) the
+The **Firmware** page (sidebar, under Additional Swift Tools) installs iPhone and iPad firmware (IPSW files) the
 way Finder does, using `idevicerestore` and `irecovery` from the
 [libimobiledevice](https://libimobiledevice.org) project, bundled with the app as separate programs
 (see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
 
 - **Device and mode.** The selected iPhone or iPad, or a device in recovery or DFU mode (found
-  every few seconds while the page is open). **Enter Recovery Mode** and **Exit Recovery Mode**,
+  every few seconds after enabling **Watch Recovery / DFU**). **Enter Recovery Mode** and **Exit Recovery Mode**,
   and step-by-step DFU instructions.
 - **Apple's firmware.** Apple's firmware list (`itunes.apple.com/check/version`, the one Finder
-  uses) gives the current firmware for the model, with Apple's SHA-1. **Check Signing** asks
-  Apple's signing server whether it still signs that build — reading only the build manifest from
+  uses) gives the current firmware for the model, with Apple's SHA-1 when supplied. **Check Signing** asks
+  Apple's signing server whether it still signs the matching build identity — reading only the build manifest from
   Apple's server, and sending a random device ID, never the device's. **Download** saves the IPSW
-  to the library, continues an interrupted download where it stopped, and keeps the file only if
-  its SHA-1 matches Apple's.
+  to the library and continues an interrupted download where it stopped. A supplied catalog SHA-1
+  must match or the staged file is deleted. Without it, the result explicitly says Apple's checksum
+  is unavailable. A local SHA-256 identifies the bytes; it does not prove Apple provenance or signing.
 - **Library.** IPSW files in `~/Library/Application Support/iOS Developer Toolkit (Swift)/Firmware`.
   Add your own, check signing, verify (SHA-1 and SHA-256), show in Finder, or move to the Trash.
 - **Install.** Choose an IPSW and **Update** (keeps apps and data) or **Restore** (erases the
-  device). **Check Before Installing** confirms the firmware is for this model, has the right
-  install type, is signed by Apple, and that the installer finds the device — without changing
-  anything. Update needs the typed `RUN` confirmation; Restore is high impact. Progress is shown
-  step by step; **Stop** works until the system starts being written, after which the install
-  always finishes, since stopping then would leave the device unusable. Logs are kept in the
-  library's `Logs` folder.
+  device). **Check Before Installing** establishes readiness without changing the device. After
+  confirmation, every mandatory check runs again: file identity, exact target/board, the requested
+  Update or Erase identity, current Apple TSS signing for that identity, and `--no-action` device
+  detection. A failed or unknown result blocks installation. Update requires a Customer Upgrade
+  identity and never falls back to erase. Update needs the typed `RUN` confirmation; Restore needs
+  the high-impact confirmation and backup acknowledgement. Progress is shown step by step.
+  At the critical firmware-writing boundary, **Stop** and normal Quit are refused until
+  the helper exits, including failure exits; closing the last window cannot terminate the app then.
+  Sudden-termination protection is balanced around that phase. Force Quit, SIGKILL, power loss,
+  kernel panic and cable removal can still interrupt it. Logs are kept in the library's `Logs` folder.
 
 During an install, Apple's signing server receives the device's chip, board, and ECID to sign
 the firmware for it, as with Finder. Firmware that Apple no longer signs cannot be installed.
@@ -310,7 +330,7 @@ device could not be identified.
   iOS 17 and later asks Apple's signing server (`gs.apple.com`) to personalize it, sending the
   device's chip, board, and ECID with a one-time nonce — as Xcode does. Installing firmware sends
   the same kind of request, as Finder does; checking whether Apple signs a firmware uses a random
-  device ID. The Firmware page reads Apple's firmware list and downloads IPSWs from Apple. Captures, backups, cases, and reports are written with
+  device ID. The Firmware page reads Apple's firmware list and downloads IPSWs from Apple. Security Analysis keeps selected evidence local; an explicit threat-intelligence update downloads a commit-pinned source with SHA-256 provenance. Captures, backups, cases, and reports are written with
   owner-only permissions. The app's own log records outcomes rather than device content, and marks
   identifiers as private.
 - **Sanitized sharing.** **iOS Developer Toolkit › Create Support Bundle…** and the readiness
@@ -390,7 +410,7 @@ Documentation screenshots are produced by the app itself:
 Layout: `Sources/ToolkitCore` (process runner, errors, logging, secure files),
 `Sources/DeviceKit` (usbmuxd, lockdown and its services, CoreDevice, simctl, discovery),
 `Sources/ToolkitFeatures` (Location Lab, IPA inspection, logs, actions, readiness, evidence,
-external tools), `Sources/idt` (CLI), `App/` (SwiftUI app and UI tests), `Tests/`.
+Security Analysis, external tools), `Sources/idt` (CLI), `App/` (SwiftUI app and UI tests), `Tests/`.
 See [docs/architecture.md](docs/architecture.md).
 
 ## Project status and limitations

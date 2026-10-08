@@ -16,6 +16,10 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
     ],
     targets: [
+        .systemLibrary(
+            name: "CSQLite",
+            path: "Sources/CSQLite"
+        ),
         .target(
             name: "ToolkitCore",
             path: "Sources/ToolkitCore"
@@ -33,7 +37,7 @@ let package = Package(
         ),
         .target(
             name: "ToolkitFeatures",
-            dependencies: ["ToolkitCore", "DeviceKit"],
+            dependencies: ["ToolkitCore", "DeviceKit", "CSQLite"],
             path: "Sources/ToolkitFeatures",
             resources: [.process("Resources")]
         ),
@@ -79,7 +83,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ToolkitFeaturesTests",
-            dependencies: ["ToolkitFeatures", "DeviceKit", "ToolkitCore", "DeviceTestSupport"],
+            dependencies: ["ToolkitFeatures", "DeviceKit", "ToolkitCore", "DeviceTestSupport", "CSQLite"],
             path: "Tests/ToolkitFeaturesTests",
             resources: [.copy("Fixtures")]
         ),

@@ -3,23 +3,67 @@ import SwiftUI
 import ToolkitCore
 import ToolkitFeatures
 
+private enum CapabilitySection: String, CaseIterable, Identifiable {
+    case current
+    case compatibility
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .current: return "Current Device"
+        case .compatibility: return "Real-Device Compatibility"
+        }
+    }
+}
+
 struct ReadinessView: View {
     @Environment(AppModel.self) private var model
+    @State private var section: CapabilitySection = .current
     @State private var selectedRow: CapabilityResult.ID?
-    @State private var isRunning = false
     @State private var history: [CompatibilityObservation] = []
+
+    private var isRunning: Bool {
+        model.operations.contains { $0.title == "Readiness Check" }
+    }
 
     var body: some View {
         WorkspacePage(workspace: .readiness) {
+            Picker("Capability section", selection: $section) {
+                ForEach(CapabilitySection.allCases) { section in
+                    Text(section.title)
+                        .tag(section)
+                        .accessibilityIdentifier("capability-section-\(section.rawValue)")
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("capability-sections")
+            switch section {
+            case .current:
+                currentDevice
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("capability-content-current")
+            case .compatibility:
+                compatibility
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("capability-content-compatibility")
+            }
+        }
+        .onAppear { history = CompatibilityStore().load() }
+        .onChange(of: isRunning) { _, running in
+            if !running { history = CompatibilityStore().load() }
+        }
+    }
+
+    private var currentDevice: some View {
+        VStack(alignment: .leading, spacing: 16) {
             TargetHeader()
             if let device = model.selectedDevice {
                 let results = model.readiness(for: device)
                 HStack {
                     Button {
-                        isRunning = true
                         Task {
                             await model.runReadiness(for: device)
-                            isRunning = false
                             history = CompatibilityStore().load()
                         }
                     } label: {
@@ -44,10 +88,8 @@ struct ReadinessView: View {
                         if result.id != results.last?.id { Divider() }
                     }
                 }
-                compatibility
             }
         }
-        .onAppear { history = CompatibilityStore().load() }
     }
 
     private var compatibility: some View {

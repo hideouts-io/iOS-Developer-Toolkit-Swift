@@ -40,12 +40,6 @@ struct DeveloperImageView: View {
         .sheet(item: $confirmation) { pending in
             ConfirmationSheet(title: pending.title, detail: pending.detail, requirement: pending.requirement, target: pending.target, commandPreview: nil, onConfirm: pending.action)
         }
-        .task(id: model.selectedDevice?.id) {
-            // Reading the state never changes the device.
-            if let device = model.selectedDevice, device.kind != .simulator, model.developerImage.status(for: device) == nil {
-                await model.developerImage.refresh(device, app: model)
-            }
-        }
         .task(id: model.developerImage.folders) { reloadInventory() }
     }
 

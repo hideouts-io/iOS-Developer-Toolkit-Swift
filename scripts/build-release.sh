@@ -56,6 +56,7 @@ OUT="$(cd "$OUT" && pwd)"
 CACHE="$ROOT/build-output/release-cache"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/idt-release.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
+DERIVED_DATA="$WORK/DerivedData"
 
 NAME="iOS-Developer-Toolkit-Swift-$VERSION"
 ZIP="$OUT/$NAME-macOS-universal.zip"
@@ -68,7 +69,7 @@ step "Xcode: $(xcodebuild -version | tr '\n' ' ')"
 step "Archiving the app (arm64 + x86_64, Release)"
 xcodebuild -project iOSDeveloperToolkit.xcodeproj -scheme iOSDeveloperToolkit \
     -configuration Release -destination 'generic/platform=macOS' \
-    -derivedDataPath "$CACHE/DerivedData" -archivePath "$WORK/app.xcarchive" \
+    -derivedDataPath "$DERIVED_DATA" -archivePath "$WORK/app.xcarchive" \
     ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
     -quiet archive
 APP="$WORK/app.xcarchive/Products/Applications/iOS Developer Toolkit (Swift).app"

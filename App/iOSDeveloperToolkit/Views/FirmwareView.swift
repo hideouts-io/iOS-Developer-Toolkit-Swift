@@ -10,12 +10,11 @@ import ToolkitFeatures
 struct FirmwareView: View {
     @Environment(AppModel.self) private var model
     @State private var confirmation: PendingConfirmation?
+    @State private var isWatchingRecovery = false
 
     /// A device in recovery or DFU mode comes first: it is the one the installer will find.
     private var device: FirmwareDevice? {
-        if let recovery = model.firmware.recoveryDevice { return FirmwareDevice(recovery) }
-        if let selected = model.selectedDevice, selected.kind == .physical || selected.kind == .demo { return FirmwareDevice(selected) }
-        return nil
+        model.firmware.currentDevice(in: model)
     }
 
     var body: some View {
@@ -39,21 +38,20 @@ struct FirmwareView: View {
             ConfirmationSheet(title: pending.title, detail: pending.detail, requirement: pending.requirement, target: pending.target, commandPreview: pending.commandPreview, onConfirm: pending.action)
         }
         .task { await firmware.scanLibrary() }
-        .task { await firmware.watchRecovery(runner: model.runner) }
-        .task(id: device?.productType) {
-            if let device, let productType = device.productType, device.state != .demo {
-                await firmware.loadCatalog(productType: productType, app: model)
-            }
+        .task(id: isWatchingRecovery) {
+            if isWatchingRecovery { await firmware.watchRecovery(runner: model.runner) }
         }
-        .onChange(of: firmware.selectedIPSW) { firmware.resetPreflight() }
-        .onChange(of: firmware.mode) { firmware.resetPreflight() }
+        .onChange(of: device) { firmware.resetPreflight() }
     }
 
     // MARK: Device
 
     private var deviceCard: some View {
         let firmware = model.firmware
-        return Card(title: "Device", systemImage: "iphone", subtitle: "Connect the iPhone or iPad by USB. A device in recovery or DFU mode appears here on its own.") {
+        return Card(title: "Device", systemImage: "iphone", subtitle: "Connect the iPhone or iPad by USB. Enable Watch Recovery / DFU to check for devices in those modes.") {
+            Toggle("Watch Recovery / DFU", isOn: $isWatchingRecovery)
+                .disabled(firmware.helper(.irecovery) == nil || model.selectedDevice?.kind == .demo)
+                .accessibilityIdentifier("firmware.watch-recovery")
             if let device {
                 InfoRow("Device", device.name)
                 InfoRow("Model", device.productType ?? "Unknown", monospaced: true)
@@ -145,7 +143,7 @@ struct FirmwareView: View {
                     Text(release.fileName).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 }
                 Spacer()
-                SigningBadge(status: firmware.signing[release.build], checking: firmware.checkingSigning.contains(release.build))
+                SigningBadge(status: firmware.signingStatus(release.id, deviceClass: device.deviceClass), checking: firmware.isCheckingSigning(release.id, deviceClass: device.deviceClass))
             }
             if let sha1 = release.sha1 { InfoRow("Apple's SHA-1", sha1, monospaced: true) }
             if let progress {
@@ -155,7 +153,7 @@ struct FirmwareView: View {
             }
             HStack {
                 Button("Check Signing") { Task { await firmware.checkSigning(release, deviceClass: device.deviceClass, app: model) } }
-                    .disabled(firmware.checkingSigning.contains(release.build))
+                    .disabled(firmware.isCheckingSigning(release.id, deviceClass: device.deviceClass))
                 if firmware.isDownloaded(release) {
                     Label("In the library", systemImage: "checkmark.circle").font(.callout).foregroundStyle(.green)
                 } else if progress != nil {
@@ -163,7 +161,7 @@ struct FirmwareView: View {
                         .help("The download continues where it stopped next time.")
                 } else {
                     Button("Download") { firmware.download(release, app: model) }
-                        .help("Downloads the IPSW to the firmware library and checks it against Apple's SHA-1.")
+                        .help("Downloads the IPSW and compares Apple's catalog SHA-1 when available. A local SHA-256 alone does not verify Apple provenance.")
                 }
             }
         }
@@ -217,7 +215,7 @@ struct FirmwareView: View {
                 if matches == false {
                     Label("Not for this device", systemImage: "xmark.circle").font(.caption).foregroundStyle(.orange)
                 }
-                SigningBadge(status: firmware.signing[file.id], checking: firmware.checkingSigning.contains(file.id))
+                SigningBadge(status: firmware.signingStatus(file.id, deviceClass: device?.deviceClass), checking: firmware.isCheckingSigning(file.id, deviceClass: device?.deviceClass))
             }
             if let fraction = firmware.verifying[file.id] {
                 ProgressView(value: fraction) { Text("Verifying").font(.caption) }
@@ -226,17 +224,17 @@ struct FirmwareView: View {
             }
             HStack {
                 Button("Check Signing") { Task { await firmware.checkSigning(file, deviceClass: device?.deviceClass, app: model) } }
-                    .disabled(firmware.checkingSigning.contains(file.id))
+                    .disabled(firmware.isCheckingSigning(file.id, deviceClass: device?.deviceClass))
                 Button("Verify") { Task { await firmware.verify(file, app: model) } }
                     .disabled(firmware.verifying[file.id] != nil)
-                    .help("Computes SHA-1 and SHA-256 and compares them with Apple's checksum")
+                    .help("Computes local SHA-1 and SHA-256; compares Apple's catalog checksum when available.")
                 Button("Show in Finder") { FilePanels.reveal(file.url) }
                 Button("Move to Trash") {
                     confirmation = PendingConfirmation(title: "Move \(file.url.lastPathComponent) to the Trash", detail: "The file stays in the Trash until you empty it.", requirement: .make(for: .hostWrite, target: nil), target: nil) {
                         Task { await firmware.moveToTrash(file, app: model) }
                     }
                 }
-                .disabled(firmware.isInstalling && firmware.selectedIPSW == file.id)
+                .disabled((firmware.isInstalling || firmware.isPreflighting) && firmware.selectedIPSW == file.id)
             }
         }
     }
@@ -254,14 +252,16 @@ struct FirmwareView: View {
                     Text("\(file.title) — \(file.url.lastPathComponent)").tag(Optional(file.id))
                 }
             }
-            .disabled(firmware.isInstalling)
+            .disabled(firmware.isInstalling || firmware.isPreflighting)
+            .accessibilityIdentifier("firmware.file")
             Picker("Install", selection: Binding(get: { firmware.mode }, set: { firmware.mode = $0 })) {
                 ForEach(FirmwareInstall.Mode.allCases, id: \.self) { mode in
                     Text(mode.title + (mode == .update ? " (keep data)" : " (erase)")).tag(mode)
                 }
             }
             .pickerStyle(.segmented)
-            .disabled(firmware.isInstalling)
+            .disabled(firmware.isInstalling || firmware.isPreflighting)
+            .accessibilityIdentifier("firmware.mode")
             Text(firmware.mode.explanation).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 4) {
@@ -283,7 +283,16 @@ struct FirmwareView: View {
                             Text(check.detail).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         }
                     }
+                    if let plan = firmware.validatedInstall {
+                        Text("Checked \(plan.validatedAt.formatted(date: .omitted, time: .standard)). Mandatory checks repeat after confirmation.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
+                .accessibilityIdentifier("firmware.readiness")
+            } else {
+                Text("Check Before Installing to establish \(firmware.mode.title) eligibility. Every mandatory check runs again after confirmation.")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("firmware.readiness")
             }
 
             if firmware.isInstalling || firmware.installStep != nil {
@@ -295,8 +304,10 @@ struct FirmwareView: View {
                     Button("Check Before Installing") { Task { await firmware.runPreflight(device, app: model) } }
                         .disabled(firmware.selectedFile == nil || firmware.isPreflighting || firmware.isInstalling || firmware.helperProblem != nil)
                         .help("Checks the model, Apple's signing, and that the installer finds the device. Nothing on the device changes.")
+                        .accessibilityIdentifier("firmware.preflight")
                     Button("\(firmware.mode.title)…") { confirmInstall(device) }
-                        .disabled(firmware.selectedFile == nil || firmware.isInstalling || device.state == .demo || firmware.helperProblem != nil)
+                        .disabled(!firmware.canInstall(device) || firmware.helperProblem != nil)
+                        .accessibilityIdentifier("firmware.install")
                     if firmware.isPreflighting { ProgressView().controlSize(.small) }
                 }
                 Spacer()
@@ -314,7 +325,7 @@ struct FirmwareView: View {
                 Text(firmware.installStep ?? "Starting…").font(.callout.weight(.semibold))
             }
             if firmware.pastPointOfNoReturn && firmware.isInstalling {
-                Label("The system is being written. It can't be stopped now — keep the device connected.", systemImage: "exclamationmark.octagon")
+                Label("Firmware writing has started. Stop and normal Quit are disabled until the installer exits. Keep the device connected.", systemImage: "exclamationmark.octagon")
                     .font(.callout)
                     .foregroundStyle(.red)
             }
@@ -335,21 +346,21 @@ struct FirmwareView: View {
 
     private func confirmInstall(_ device: FirmwareDevice) {
         let firmware = model.firmware
-        guard let file = firmware.selectedFile else { return }
-        let restore = firmware.mode == .restore
-        let failed = firmware.preflight.filter { $0.passed == false }
+        guard firmware.canInstall(device), let file = firmware.selectedFile else {
+            firmware.resetPreflight()
+            model.present(ToolkitError.invalidInput("Check Before Installing again for the current device, IPSW and install mode."))
+            return
+        }
+        let selection = device.installSelection(ipsw: file.url, mode: firmware.mode)
+        let restore = selection.mode == .restore
         var lines = [restore
             ? "\(device.name) will be erased and \(file.title) installed. Everything on it is deleted."
             : "\(file.title) will be installed on \(device.name). Apps, settings, and data are kept."]
-        lines.append("Stop works only until the system starts being written. After that, stopping would leave the device unusable, so the install always finishes.")
+        lines.append("The device, IPSW, install identity, signing and installer preflight are checked again immediately before installing. A failed or unknown check blocks installation.")
+        lines.append("Stop and normal Quit work only before firmware writing starts. After that, they are disabled until the installer exits. Keep the Mac powered and the device connected.")
         lines.append("Apple's signing server receives the device's chip, board, and ECID to sign the firmware for it, as Finder does.")
-        if firmware.preflight.isEmpty {
-            lines.append("Tip: Check Before Installing first.")
-        } else if !failed.isEmpty {
-            lines.append("The check found problems: " + failed.map(\.title).joined(separator: ", ") + ".")
-        }
         confirmation = PendingConfirmation(title: restore ? "Erase and restore \(device.name)" : "Update \(device.name)", detail: lines.joined(separator: "\n\n"), requirement: .make(for: restore ? .highImpact : .deviceChange, target: device.target), target: device.target) {
-            Task { await firmware.install(device, app: model) }
+            Task { await firmware.install(selection, device: device, app: model) }
         }
     }
 

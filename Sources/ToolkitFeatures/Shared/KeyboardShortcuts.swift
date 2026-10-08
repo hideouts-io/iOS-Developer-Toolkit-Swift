@@ -3,17 +3,17 @@ import Foundation
 extension Workspace {
     /// The workspace after this one in sidebar order, wrapping around (⌥⌘→).
     public var next: Workspace {
-        let all = Workspace.allCases
-        return all[(all.firstIndex(of: self)! + 1) % all.count]
+        let all = Workspace.navigationOrder
+        return all[(all.firstIndex(of: sidebarWorkspace)! + 1) % all.count]
     }
 
     /// The workspace before this one in sidebar order, wrapping around (⌥⌘←).
     public var previous: Workspace {
-        let all = Workspace.allCases
-        return all[(all.firstIndex(of: self)! + all.count - 1) % all.count]
+        let all = Workspace.navigationOrder
+        return all[(all.firstIndex(of: sidebarWorkspace)! + all.count - 1) % all.count]
     }
 
-    /// Workspaces with a ⌘-number shortcut, in order.
+    /// Original ⌘-number assignments, retained for existing keyboard workflows.
     public static var numbered: [Workspace] { Array(allCases.prefix(9)) }
 }
 

@@ -42,7 +42,7 @@ struct FirmwareTests {
             .dictionary([
                 "ApChipID": "0x8150", "ApBoardID": .string(board), "ApSecurityDomain": "0x01",
                 "UniqueBuildID": .data(Data([1, 2, 3, 4])), "Ap,ProductType": "iPhone18,1", "Ap,OSLongVersion": "27.0.1.24A446",
-                "Info": .dictionary(["DeviceClass": "v53ap", "Variant": .string("Customer \(behavior) Install (IPSW)"), "RestoreBehavior": .string(behavior)]),
+                "Info": .dictionary(["DeviceClass": .string(board == "0x0E" ? "v54ap" : "v53ap"), "Variant": .string("Customer \(behavior == "Update" ? "Upgrade" : behavior) Install (IPSW)"), "RestoreBehavior": .string(behavior)]),
                 "Manifest": .dictionary([
                     "KernelCache": .dictionary(["Digest": .data(Data(repeating: 7, count: 48)), "Trusted": true, "Info": .dictionary(["Path": "kernelcache"])]),
                     "Untrusted": .dictionary(["Digest": .data(Data([9])), "Info": .dictionary(["Path": "x"])]),
@@ -198,20 +198,27 @@ struct FirmwareTests {
         #expect(throws: ToolkitError.self) { try RecoveryProbe.exitRecoveryRequest(helper: URL(fileURLWithPath: "/x/irecovery"), ecid: "1; rm -rf /") }
     }
 
-    @Test func buildsTheInstallCommand() throws {
+    @Test func buildsTheInstallCommand() async throws {
         let folder = try SecureFileIO.makeTemporaryDirectory(prefix: "install")
         defer { try? FileManager.default.removeItem(at: folder) }
         let ipsw = try Self.fakeIPSW(in: folder)
-        let helper = URL(fileURLWithPath: "/App/Contents/Helpers/idevicerestore")
+        let helper = folder.appendingPathComponent("idevicerestore")
+        try SecureFileIO.writeNewFile(Data("helper fixture".utf8), to: helper, mode: 0o755)
         let cache = folder.appendingPathComponent("cache"), log = folder.appendingPathComponent("restore.log")
-        let update = try FirmwareInstall.request(helper: helper, ipsw: ipsw, mode: .update, target: .udid("00008150-000B33334444002E"), cacheDirectory: cache, logFile: log, preflightOnly: false)
-        #expect(update.arguments == ["--plain-progress", "--no-input", "--cache-path", cache.path, "--logfile", log.path, "--udid", "00008150-000B33334444002E", ipsw.path])
+        struct Signed: PersonalizationTransport {
+            func send(_ body: Data) async throws -> Data { Data("STATUS=0&MESSAGE=SUCCESS".utf8) }
+        }
+        let detection = StreamingRunner(chunks: [.standardOutput(Data("Found device in Normal mode\nECID: 42\nIdentified device as v53ap, iPhone18,1\n".utf8))], exitCode: 0)
+        let selection = FirmwareInstallSelection(ipsw: ipsw, target: .udid("00008150-000B33334444002E"), productType: "iPhone18,1", deviceClass: "v53ap", chipID: nil, boardID: nil, mode: .update)
+        let plan = try await ValidatedFirmwareInstall.validate(selection: selection, helper: helper, cacheDirectory: cache, logFile: log, catalogSHA1: nil, runner: detection, signingTransport: Signed())
+        let update = try FirmwareInstall.request(plan: plan, cacheDirectory: cache, logFile: log, now: Date())
+        #expect(update.arguments == ["--plain-progress", "--no-input", "--cache-path", cache.path, "--logfile", log.path, "--ecid", "0x2a", "--variant", "Customer Upgrade Install (IPSW)", ipsw.path])
         #expect(update.timeout == nil)
-        let restore = try FirmwareInstall.request(helper: helper, ipsw: ipsw, mode: .restore, target: .ecid("0x1A2B"), cacheDirectory: cache, logFile: log, preflightOnly: true)
+        let restore = try FirmwareInstall.preflightRequest(helper: helper, ipsw: ipsw, mode: .restore, target: .ecid("0x1A2B"), cacheDirectory: cache, logFile: log)
         #expect(restore.arguments.contains("--erase") && restore.arguments.contains("--no-action") && restore.arguments.contains("--ecid"))
-        #expect(!update.arguments.contains("--erase"), "an update never erases")
-        #expect(throws: ToolkitError.self) { try FirmwareInstall.request(helper: helper, ipsw: folder.appendingPathComponent("x.zip"), mode: .update, target: .udid("00008150-000B33334444002E"), cacheDirectory: cache, logFile: log, preflightOnly: false) }
-        #expect(throws: ToolkitError.self) { try FirmwareInstall.request(helper: helper, ipsw: ipsw, mode: .update, target: .udid("--erase"), cacheDirectory: cache, logFile: log, preflightOnly: false) }
+        #expect(!update.arguments.contains("--erase"), "a validated Update pins the data-preserving variant without an erase flag")
+        #expect(throws: ToolkitError.self) { try FirmwareInstall.preflightRequest(helper: helper, ipsw: folder.appendingPathComponent("x.zip"), mode: .update, target: .udid("00008150-000B33334444002E"), cacheDirectory: cache, logFile: log) }
+        #expect(throws: ToolkitError.self) { try FirmwareInstall.preflightRequest(helper: helper, ipsw: ipsw, mode: .update, target: .udid("--erase"), cacheDirectory: cache, logFile: log) }
     }
 
     @Test func followsProgressAndExplainsFailures() {
@@ -265,7 +272,7 @@ struct FirmwareTests {
         #expect(good.allSatisfy { $0.passed == true })
         let otherModel = FirmwarePreflight.localChecks(ipsw: file, productType: "iPhone17,1", deviceClass: "v53ap", mode: .restore)
         #expect(otherModel.first?.passed == false && otherModel.first?.detail.contains("not iPhone17,1") == true)
-        #expect(FirmwarePreflight.localChecks(ipsw: file, productType: nil, deviceClass: "d47ap", mode: .restore).map(\.passed) == [false])
+        #expect(FirmwarePreflight.localChecks(ipsw: file, productType: nil, deviceClass: "d47ap", mode: .restore).map(\.passed) == [false, false])
         #expect(FirmwarePreflight.signingCheck(.signed).passed == true)
         #expect(FirmwarePreflight.signingCheck(.notSigned).passed == false)
         #expect(FirmwarePreflight.signingCheck(.unknown("offline")).passed == nil)
@@ -276,7 +283,7 @@ struct FirmwareTests {
 private final class BundleMarker {}
 
 /// Streams scripted output, then finishes with `exitCode`.
-struct StreamingRunner: CommandRunning {
+struct StreamingRunner: OwnedCommandRunning {
     let chunks: [CommandStreamEvent]
     let exitCode: Int32
 
@@ -296,5 +303,13 @@ struct StreamingRunner: CommandRunning {
             continuation.yield(.finished(CommandResult(request: request, termination: .exited(exitCode), standardOutput: Data(), standardError: Data(), startedAt: Date(), finishedAt: Date())))
             continuation.finish()
         }
+    }
+
+    func stream(_ request: CommandRequest, cancellation: CommandCancellation) -> AsyncThrowingStream<CommandStreamEvent, Error> {
+        guard !cancellation.isCancelled else {
+            return AsyncThrowingStream { $0.finish(throwing: ToolkitError.cancelled(request.displayName)) }
+        }
+        // This fixture has already exited before its stream is returned.
+        return stream(request)
     }
 }

@@ -53,6 +53,11 @@ point `IDT_RESTORE_HELPERS` at a folder that contains them.
 The Location Lab world map is derived from [Natural Earth](https://www.naturalearthdata.com)
 1:110m land data, which is in the public domain.
 
+## macOS system libraries
+
+Security Analysis reads backup manifests through the SQLite library supplied by macOS. The app
+links the system library through a local module map; it does not bundle or redistribute SQLite.
+
 ## Optional external tools
 
 [MVT](https://github.com/mvt-project/mvt), [UFADE](https://github.com/prosch88/UFADE), and

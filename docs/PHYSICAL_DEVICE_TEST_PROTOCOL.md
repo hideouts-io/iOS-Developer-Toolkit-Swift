@@ -84,6 +84,31 @@ of issues and pull requests. Report results as **passed**, **failed**, **not app
 - **Evidence Capture**: a 60-second collection with Unified Logs and packet capture; verify the
   manifest and `SHA256SUMS.txt`.
 
+## Stage 5 — firmware (supervised release validation)
+
+Use representative hardware with a verified backup and an Apple-signed IPSW. Restore erases the
+device; use only a device explicitly set aside for that operation. Record each result separately.
+Do not deliberately disconnect power or a cable during writing, or construct a data-loss scenario.
+
+1. On an Update-capable signed IPSW, run **Check Before Installing** in normal mode. Expect the
+   exact device and Customer Upgrade identity, current signing, installer preflight and an honest
+   integrity result. Confirm Update and verify the resulting version/build and retained data.
+2. Repeat the readiness check in recovery mode. Validate an authorized Update if supported.
+3. In DFU mode, expect Update unavailable. On a device reserved for erase testing, confirm Restore
+   with backup acknowledgement; verify the resulting version/build and device setup.
+4. Cancel an install while still before the critical phase. Expect an explicit stopped/incomplete
+   result, no unexpected switch to Restore, and a working retry path. The device may need another install.
+5. During an otherwise authorized install's critical phase, attempt Cmd-Q and last-window close.
+   Expect the writing explanation, refused normal termination, and continued helper ownership.
+   Confirm quit works after successful completion or an independently occurring helper failure.
+6. Validate unplugged-device errors during read-only preflight. Record naturally occurring cable or
+   device errors during installation without intentionally provoking them; verify explicit failure
+   and released termination protection after the helper exits.
+
+The deterministic tests cover the gate and lifecycle policy; this stage establishes real-device
+and native termination behavior. Protection does not prevent Force Quit, SIGKILL, power loss,
+kernel panic or cable removal. Do not label any unrun step as validated.
+
 ## Report
 
 For each failure, record the step, the exact message, the technical details from **Help ›

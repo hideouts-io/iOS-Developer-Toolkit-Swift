@@ -5,13 +5,67 @@ import ToolkitFeatures
 
 // MARK: - Backup
 
+private enum BackupSection: String, CaseIterable, Identifiable {
+    case mobileBackup2
+    case ufade
+    case mvt
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .mobileBackup2: return "MobileBackup2"
+        case .ufade: return "UFADE External"
+        case .mvt: return "MVT Analysis"
+        }
+    }
+}
+
 struct BackupView: View {
-    @Environment(AppModel.self) private var model
+    @State private var section: BackupSection = .mobileBackup2
     @State private var confirmation: PendingConfirmation?
 
     var body: some View {
-        @Bindable var backup = model.backup
         WorkspacePage(workspace: .backup) {
+            Picker("Backup section", selection: $section) {
+                ForEach(BackupSection.allCases) { section in
+                    Text(section.title)
+                        .tag(section)
+                        .accessibilityIdentifier("backup-section-\(section.rawValue)")
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("backup-sections")
+            switch section {
+            case .mobileBackup2:
+                MobileBackup2View(confirmation: $confirmation)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("backup-content-mobileBackup2")
+            case .ufade:
+                ExternalToolNotice()
+                UFADEExternalView()
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("backup-content-ufade")
+            case .mvt:
+                ExternalToolNotice()
+                MVTAnalysisView(confirmation: $confirmation)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("backup-content-mvt")
+            }
+        }
+        .sheet(item: $confirmation) { pending in
+            ConfirmationSheet(title: pending.title, detail: pending.detail, requirement: pending.requirement, target: pending.target, commandPreview: pending.commandPreview, onConfirm: pending.action)
+        }
+    }
+}
+
+private struct MobileBackup2View: View {
+    @Environment(AppModel.self) private var model
+    @Binding var confirmation: PendingConfirmation?
+
+    var body: some View {
+        @Bindable var backup = model.backup
+        VStack(alignment: .leading, spacing: 16) {
             TargetHeader(allowedKinds: [.physical])
             if let device = model.selectedDevice, device.kind == .physical {
                 if !device.supportsLockdownServices {
@@ -84,12 +138,6 @@ struct BackupView: View {
                     }
                 }
             }
-            Card(title: "Analyze or acquire with separate tools", systemImage: "wrench.and.screwdriver", subtitle: "MVT (consented spyware-indicator checks on a decrypted backup) and UFADE (advanced logical acquisitions) are separate projects you install yourself.") {
-                Button("Open External Tools") { model.workspace = .externalTools }
-            }
-        }
-        .sheet(item: $confirmation) { pending in
-            ConfirmationSheet(title: pending.title, detail: pending.detail, requirement: pending.requirement, target: pending.target, commandPreview: nil, onConfirm: pending.action)
         }
     }
 }
@@ -189,27 +237,50 @@ struct EvidenceView: View {
 
 struct ExternalToolsView: View {
     @Environment(AppModel.self) private var model
-    @State private var confirmation: PendingConfirmation?
 
     var body: some View {
         @Bindable var tools = model.externalTools
         WorkspacePage(workspace: .externalTools) {
-            Text("These are independent projects you install yourself. The toolkit does not bundle, update, or import them; it validates the file you choose (path and SHA-256) and runs it with a minimal environment. None of them is required.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            mvtCard(tools)
-            ufadeCard(tools)
+            ExternalToolNotice()
             idbCard(tools)
-        }
-        .sheet(item: $confirmation) { pending in
-            ConfirmationSheet(title: pending.title, detail: pending.detail, requirement: pending.requirement, target: pending.target, commandPreview: pending.commandPreview, onConfirm: pending.action)
         }
     }
 
-    private func mvtCard(_ tools: ExternalToolsModel) -> some View {
+    private func idbCard(_ tools: ExternalToolsModel) -> some View {
         @Bindable var tools = tools
-        return Card(title: "MVT — Mobile Verification Toolkit", systemImage: "shield.checkered", subtitle: "Checks a decrypted iTunes-style backup for published indicators of compromise, with the device owner's consent. A run with no findings does not prove a device is clean.") {
+        return Card(title: "idb Companion", systemImage: "rectangle.connected.to.line.below", subtitle: "Meta's automation companion. Only a read-only inventory is offered here.") {
+            HStack {
+                TextField("Path to idb_companion", text: $tools.idbPath).textFieldStyle(.roundedBorder).font(.callout.monospaced())
+                Button("Validate") { Task { await tools.validateIDB(app: model) } }.disabled(tools.idbPath.isEmpty)
+            }
+            if let idb = tools.idb {
+                HStack {
+                    Label(idb.version, systemImage: "checkmark.seal").foregroundStyle(.green)
+                    Button("List Targets") { Task { await tools.probeIDB(app: model) } }
+                }
+            }
+            if !tools.idbOutput.isEmpty { RawOutputView(text: tools.idbOutput, maxHeight: 160) }
+            Text("Install with: \(IDBCompanionConnector.setupCommand)").font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+        }
+    }
+}
+
+private struct ExternalToolNotice: View {
+    var body: some View {
+        Text("These are independent projects you install yourself. The toolkit does not bundle, update, or import them; it validates the file you choose (path and SHA-256) and runs it with a minimal environment. None of them is required.")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct MVTAnalysisView: View {
+    @Environment(AppModel.self) private var model
+    @Binding var confirmation: PendingConfirmation?
+
+    var body: some View {
+        @Bindable var tools = model.externalTools
+        Card(title: "MVT — Mobile Verification Toolkit", systemImage: "shield.checkered", subtitle: "Checks a decrypted iTunes-style backup for published indicators of compromise, with the device owner's consent. A run with no findings does not prove a device is clean.") {
             HStack {
                 TextField("Path to mvt-ios", text: $tools.mvtPath).textFieldStyle(.roundedBorder).font(.callout.monospaced())
                 Button("Choose…") { if let url = FilePanels.chooseFile(title: "Choose mvt-ios", allowedExtensions: []) { tools.mvtPath = url.path } }
@@ -252,10 +323,14 @@ struct ExternalToolsView: View {
             }
         }
     }
+}
 
-    private func ufadeCard(_ tools: ExternalToolsModel) -> some View {
-        @Bindable var tools = tools
-        return Card(title: "UFADE", systemImage: "externaldrive.badge.person.crop", subtitle: "A separate GPL-3.0 acquisition app with its own Python 3.11 environment. It chooses its own device, asks for its own passwords, and keeps running if you quit the toolkit.") {
+private struct UFADEExternalView: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var tools = model.externalTools
+        Card(title: "UFADE", systemImage: "externaldrive.badge.person.crop", subtitle: "A separate GPL-3.0 acquisition app with its own Python 3.11 environment. It chooses its own device, asks for its own passwords, and keeps running if you quit the toolkit.") {
             HStack {
                 Button("Choose UFADE Folder…") { tools.ufadeCheckout = FilePanels.chooseFolder(title: "Choose the UFADE checkout", canCreate: false) }
                 if let checkout = tools.ufadeCheckout { Text(checkout.path).font(.callout.monospaced()).lineLimit(1).truncationMode(.middle) }
@@ -287,24 +362,6 @@ struct ExternalToolsView: View {
             DisclosureGroup("Install UFADE") {
                 RawOutputView(text: UFADEConnector.setupCommands.joined(separator: "\n"), maxHeight: 110)
             }
-        }
-    }
-
-    private func idbCard(_ tools: ExternalToolsModel) -> some View {
-        @Bindable var tools = tools
-        return Card(title: "idb Companion", systemImage: "rectangle.connected.to.line.below", subtitle: "Meta's automation companion. Only a read-only inventory is offered here.") {
-            HStack {
-                TextField("Path to idb_companion", text: $tools.idbPath).textFieldStyle(.roundedBorder).font(.callout.monospaced())
-                Button("Validate") { Task { await tools.validateIDB(app: model) } }.disabled(tools.idbPath.isEmpty)
-            }
-            if let idb = tools.idb {
-                HStack {
-                    Label(idb.version, systemImage: "checkmark.seal").foregroundStyle(.green)
-                    Button("List Targets") { Task { await tools.probeIDB(app: model) } }
-                }
-            }
-            if !tools.idbOutput.isEmpty { RawOutputView(text: tools.idbOutput, maxHeight: 160) }
-            Text("Install with: \(IDBCompanionConnector.setupCommand)").font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
         }
     }
 }

@@ -32,6 +32,7 @@ struct ActivityView: View {
             .overlay {
                 if model.journalRecords.isEmpty {
                     ContentUnavailableView("Nothing Yet", systemImage: "clock", description: Text("Operations appear here as you run them."))
+                        .accessibilityIdentifier("session-activity-empty")
                 }
             }
             if let id = selection, let record = model.journalRecords.first(where: { $0.id == id }) {
@@ -217,8 +218,8 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack {
-                    Button("Export Profile…") { exportProfile() }
-                    Button("Import Profile…") { importProfile() }
+                    Button("Export Profile…") { profileMessage = WorkspaceProfileTransfer.exportProfile(model: model) }
+                    Button("Import Profile…") { profileMessage = WorkspaceProfileTransfer.importProfile(model: model) }
                 }
                 if let profileMessage { Text(profileMessage).font(.callout) }
             }
@@ -245,24 +246,31 @@ struct SettingsView: View {
         }
         .frame(width: 560, height: 320)
     }
+}
 
-    private func exportProfile() {
+/// One profile transfer flow shared by Settings and the sidebar. Import applies defaults only.
+@MainActor
+enum WorkspaceProfileTransfer {
+    @discardableResult
+    static func exportProfile(model: AppModel) -> String? {
         var profile = WorkspaceProfile(name: "Team defaults", defaultWorkspace: model.workspace, actionCategory: model.actionsCategory, selectedAction: model.selectedActionID, developerImageMechanism: model.developerImage.mechanism)
         profile.apps = .init(calculateSizes: model.apps.calculateSizes, includeSystemApps: model.apps.includeSystemApps, installAsDeveloperPackage: model.install.installAsDeveloperPackage)
         profile.backup = .init(forceFullBackup: model.backup.forceFullBackup, requireEncryption: model.backup.requireEncryption)
         profile.evidence = model.evidence.options
         profile.location = .init(timingJitterMilliseconds: model.location.jitterMilliseconds, ignoreRecordedTiming: model.location.ignoreRecordedTiming, routeSpeedKmh: Int(model.location.speedKmh), routeIntervalSeconds: model.location.routeIntervalSeconds, routeTraversals: model.location.routeTraversals)
-        guard let url = FilePanels.save(title: "Export workspace profile", suggestedName: "workspace-profile.json", allowedExtension: "json") else { return }
+        guard let url = FilePanels.save(title: "Export workspace profile", suggestedName: "workspace-profile.json", allowedExtension: "json") else { return nil }
         do {
             try SecureFileIO.writeNewFile(try profile.encoded(), to: url)
-            profileMessage = "Exported.\n" + profile.preview
+            return "Exported.\n" + profile.preview
         } catch {
             model.present(error)
+            return nil
         }
     }
 
-    private func importProfile() {
-        guard let url = FilePanels.chooseFile(title: "Import workspace profile", allowedExtensions: ["json"]) else { return }
+    @discardableResult
+    static func importProfile(model: AppModel) -> String? {
+        guard let url = FilePanels.chooseFile(title: "Import workspace profile", allowedExtensions: ["json"]) else { return nil }
         do {
             let imported = try WorkspaceProfile.importing(try Data(contentsOf: url))
             let profile = imported.profile
@@ -274,7 +282,7 @@ struct SettingsView: View {
             alert.informativeText = profile.preview + translation + "\n\nOnly defaults change. Nothing runs."
             alert.addButton(withTitle: "Apply")
             alert.addButton(withTitle: "Cancel")
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            guard alert.runModal() == .alertFirstButtonReturn else { return nil }
             guard model.operations.isEmpty else { throw ToolkitError.invalidInput("Wait for running operations to finish before importing a profile.") }
             model.workspace = profile.defaultWorkspace
             model.actionsCategory = profile.actionCategory
@@ -292,9 +300,11 @@ struct SettingsView: View {
             model.location.customSpeedKmh = Double(profile.location.routeSpeedKmh)
             model.location.routeIntervalSeconds = profile.location.routeIntervalSeconds
             model.location.routeTraversals = profile.location.routeTraversals
-            profileMessage = imported.legacyVersion == nil ? "Applied “\(profile.name)”." : "Applied “\(profile.name)” from version \(imported.legacyVersion ?? "")."
+            model.actionsNavigationID = UUID()
+            return imported.legacyVersion == nil ? "Applied “\(profile.name)”." : "Applied “\(profile.name)” from version \(imported.legacyVersion ?? "")."
         } catch {
             model.present(error)
+            return nil
         }
     }
 }
@@ -365,10 +375,13 @@ struct CommandPaletteView: View {
     }
 
     private var entries: [Entry] {
-        var list: [Entry] = Workspace.allCases.map { workspace in
+        var list: [Entry] = (Workspace.navigationOrder + [.developerImage]).map { workspace in
             Entry(id: "workspace-\(workspace.rawValue)", title: workspace.title, subtitle: workspace.subtitle, symbol: workspace.symbolName) { model.workspace = workspace }
         }
-        list += ActionCatalog.actions(for: model.selectedDevice?.kind).map { action in
+        let actions: [ActionDescriptor] = model.selectedDevice?.kind == .demo
+            ? ActionCatalog.all
+            : ActionCatalog.actions(for: model.selectedDevice?.kind)
+        list += actions.map { action in
             Entry(id: "action-\(action.id)", title: action.title, subtitle: "\(action.category) · \(action.risk.label)", symbol: action.risk.symbolName) {
                 model.openAction(action.id)
             }

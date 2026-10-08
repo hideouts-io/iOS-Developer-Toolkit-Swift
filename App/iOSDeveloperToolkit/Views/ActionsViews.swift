@@ -3,13 +3,93 @@ import SwiftUI
 import ToolkitCore
 import ToolkitFeatures
 
+/// Presentation groups keep the native catalog and saved profile categories unchanged.
+private enum GuidedCommandCategory: String, CaseIterable, Identifiable {
+    case deviceBasics = "Device Basics"
+    case appsAndFiles = "Apps & Files"
+    case loggingAndCapture = "Logging & Capture"
+    case developerAndDVT = "Developer & DVT"
+    case webAndDiscovery = "Web & Discovery"
+    case deviceActions = "Device Actions"
+    case simulator = "Simulator"
+
+    var id: String {
+        switch self {
+        case .deviceBasics: return "device-basics"
+        case .appsAndFiles: return "apps-files"
+        case .loggingAndCapture: return "logging-capture"
+        case .developerAndDVT: return "developer-dvt"
+        case .webAndDiscovery: return "web-discovery"
+        case .deviceActions: return "device-actions"
+        case .simulator: return "simulator"
+        }
+    }
+
+    var profileCategory: String {
+        switch self {
+        case .deviceBasics, .appsAndFiles, .deviceActions, .simulator: return rawValue
+        case .webAndDiscovery: return "Network & Discovery"
+        case .loggingAndCapture, .developerAndDVT: return "All"
+        }
+    }
+
+    func contains(_ action: ActionDescriptor) -> Bool {
+        switch self {
+        case .deviceBasics, .appsAndFiles, .deviceActions, .simulator:
+            return action.category == rawValue
+        case .loggingAndCapture:
+            return action.category == "Capture & Instruments" && ["sysdiagnose", "packet-capture", "bluetooth-capture"].contains(action.id)
+        case .developerAndDVT:
+            return action.category == "Developer Services" || (action.category == "Capture & Instruments" && ["screenshot", "instruments"].contains(action.id))
+        case .webAndDiscovery:
+            return action.category == "Network & Discovery"
+        }
+    }
+}
+
+private enum GuidedCommandFilter: Hashable {
+    case all
+    case category(GuidedCommandCategory)
+    case savedCategory(String)
+
+    static func saved(_ category: String) -> GuidedCommandFilter {
+        if category == "All" { return .all }
+        if let group = GuidedCommandCategory.allCases.first(where: { $0.profileCategory == category }) {
+            return .category(group)
+        }
+        return .savedCategory(category)
+    }
+
+    var profileCategory: String {
+        switch self {
+        case .all: return "All"
+        case .category(let category): return category.profileCategory
+        case .savedCategory(let category): return category
+        }
+    }
+
+    func contains(_ action: ActionDescriptor) -> Bool {
+        switch self {
+        case .all: return true
+        case .category(let category): return category.contains(action)
+        case .savedCategory(let category): return action.category == category
+        }
+    }
+}
+
 struct ActionsView: View {
     @Environment(AppModel.self) private var model
     @State private var search = ""
+    @State private var selectedFilter: GuidedCommandFilter?
+    @State private var writtenProfileCategory: String?
+
+    private var filter: GuidedCommandFilter {
+        selectedFilter ?? GuidedCommandFilter.saved(model.actionsCategory)
+    }
 
     private var actions: [ActionDescriptor] {
         ActionCatalog.all.filter { action in
-            (model.actionsCategory == "All" || action.category == model.actionsCategory)
+            filter.contains(action)
                 && (search.isEmpty || action.title.localizedCaseInsensitiveContains(search) || action.summary.localizedCaseInsensitiveContains(search) || (action.replacesLegacy ?? "").localizedCaseInsensitiveContains(search))
         }
     }
@@ -18,17 +98,26 @@ struct ActionsView: View {
         @Bindable var model = model
         HStack(spacing: 0) {
             VStack(spacing: 8) {
-                TextField("Search actions", text: $search)
+                TextField("Search guided commands", text: $search)
                     .textFieldStyle(.roundedBorder)
-                Picker("Category", selection: $model.actionsCategory) {
-                    Text("All categories").tag("All")
-                    ForEach(ActionCatalog.categories, id: \.self) { Text($0).tag($0) }
+                    .accessibilityIdentifier("command-search")
+                Picker("Category", selection: Binding(get: { filter }, set: selectFilter)) {
+                    Text("All categories").tag(GuidedCommandFilter.all)
+                    ForEach(GuidedCommandCategory.allCases) { category in
+                        Text(category.rawValue)
+                            .tag(GuidedCommandFilter.category(category))
+                            .accessibilityIdentifier("command-category-\(category.id)")
+                    }
+                    if case .savedCategory(let category) = filter {
+                        Text("\(category) (saved filter)").tag(GuidedCommandFilter.savedCategory(category))
+                    }
                 }
                 .labelsHidden()
+                .accessibilityIdentifier("command-categories")
                 List(selection: $model.selectedActionID) {
-                    ForEach(ActionCatalog.categories.filter { name in actions.contains { $0.category == name } }, id: \.self) { name in
-                        Section(name) {
-                            ForEach(actions.filter { $0.category == name }) { action in
+                    ForEach(GuidedCommandCategory.allCases.filter { category in actions.contains { category.contains($0) } }) { category in
+                        Section(category.rawValue) {
+                            ForEach(actions.filter { category.contains($0) }) { action in
                                 ActionListRow(action: action, device: model.selectedDevice)
                                     .tag(action.id)
                             }
@@ -50,6 +139,11 @@ struct ActionsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     TargetHeader()
+                    Text("This app provides \(ActionCatalog.all.count) native actions; Python's 49 presets are not all available here. Direct Python DVT telemetry streams and DVT path listing are unavailable. Use Instruments recording for supported performance telemetry. Simulator actions are additional Swift features.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("command-coverage-note")
                     if let id = model.selectedActionID, let action = ActionCatalog.descriptor(id) {
                         ActionDetailView(action: action)
                             .id(action.id)
@@ -63,7 +157,34 @@ struct ActionsView: View {
             }
             .frame(maxWidth: .infinity)
         }
+        .onChange(of: model.actionsCategory) { _, category in
+            if category != writtenProfileCategory {
+                selectedFilter = nil
+                writtenProfileCategory = nil
+            }
+        }
+        .onChange(of: model.selectedActionID) { _, identifier in
+            if let identifier, let action = ActionCatalog.descriptor(identifier), !filter.contains(action) {
+                selectedFilter = nil
+                writtenProfileCategory = nil
+            }
+        }
+        .onChange(of: model.actionsNavigationID) { _, _ in
+            selectedFilter = nil
+            writtenProfileCategory = nil
+            search = ""
+        }
+    }
 
+    private func selectFilter(_ filter: GuidedCommandFilter) {
+        selectedFilter = filter
+        let category = filter.profileCategory
+        let action = model.selectedActionID.flatMap(ActionCatalog.descriptor)
+        // A combined presentation filter is stored as All; profile validation still compares
+        // the selected action with its unchanged native catalog category.
+        let profileCategory = action.map { category == "All" || $0.category == category ? category : "All" } ?? category
+        writtenProfileCategory = profileCategory
+        model.actionsCategory = profileCategory
     }
 }
 
@@ -100,7 +221,9 @@ struct ActionDetailView: View {
     @State private var values: [String: String] = [:]
     @State private var result: ActionResult?
     @State private var confirmation: PendingConfirmation?
-    @State private var isRunning = false
+    private var isRunning: Bool {
+        model.operations.contains { $0.title == action.title }
+    }
 
     var body: some View {
         let device = model.selectedDevice
@@ -188,12 +311,11 @@ struct ActionDetailView: View {
     private func run(_ target: DeviceTarget?, _ values: [String: String]) {
         let executor = model.executor
         let action = self.action
-        isRunning = true
         Task {
+            guard !isRunning else { return }
             let outcome = await model.run(action.title, workspace: .actions, target: target, transport: action.mechanism, outputPaths: action.parameters.filter { $0.kind == .outputFile || $0.kind == .outputDirectory }.compactMap { values[$0.id] }) { _ in
                 try await executor.execute(action, target: target, values: values)
             }
-            isRunning = false
             if let outcome { result = outcome }
         }
     }
@@ -282,7 +404,9 @@ struct AdvancedModeView: View {
     @State private var text = ""
     @State private var output = ""
     @State private var confirmation: PendingConfirmation?
-    @State private var isRunning = false
+    private var isRunning: Bool {
+        model.operations.contains { $0.title == "devicectl (Advanced Mode)" }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -344,12 +468,11 @@ struct AdvancedModeView: View {
 
     private func execute(_ arguments: [String], _ target: DeviceTarget?) {
         let executor = model.executor
-        isRunning = true
         Task {
+            guard !isRunning else { return }
             let result = await model.run("devicectl (Advanced Mode)", workspace: .actions, target: target, transport: "xcrun devicectl", argv: arguments) { _ in
                 try await executor.runAdvanced(arguments: arguments)
             }
-            isRunning = false
             if let result {
                 output = result.standardOutputText + (result.standardErrorText.isEmpty ? "" : "\n" + result.standardErrorText) + "\n[exit status \(result.exitCode.map(String.init) ?? "signal")]"
             }

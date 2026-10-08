@@ -86,7 +86,7 @@ public enum FirmwareSigning {
 
         public var explanation: String {
             switch self {
-            case .signed: return "Apple signs this firmware now, so it can be installed."
+            case .signed: return "Apple accepted signing for the checked build identity. Installation still requires exact-device validation and personalization."
             case .notSigned: return "Apple no longer signs this firmware, so it cannot be installed."
             case .unknown(let reason): return reason
             }
@@ -99,6 +99,12 @@ public enum FirmwareSigning {
     static let copiedValues = ["Ap,OSLongVersion", "Ap,OSReleaseType", "Ap,ProductMarketingVersion", "Ap,ProductType", "Ap,SDKPlatform",
                                "Ap,Target", "Ap,TargetType", "Ap,Timestamp", "UniqueBuildID", "PearlCertificationRootPub", "NeRDEpoch",
                                "AllowNeRDBoot", "PermitNeRDPivot"]
+
+    /// Browsing may use a generic identity only when no board is selected. A known board never
+    /// falls back to another device's identity; this check alone does not authorize installation.
+    public static func identityForCheck(manifest: FirmwareManifest, deviceClass: String?) -> FirmwareManifest.Identity? {
+        manifest.identity(deviceClass: deviceClass)
+    }
 
     /// The application-processor signing request, built the way libtatsu builds it for a restore.
     public static func request(identity: FirmwareManifest.Identity, ecid: UInt64 = UInt64.random(in: 1...UInt64(1) << 52), nonce: Data = randomBytes(32), sepNonce: Data = randomBytes(20), requestID: UUID = UUID()) -> PlistValue {

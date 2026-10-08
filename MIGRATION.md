@@ -499,12 +499,12 @@ Everything that does not need the restore protocol is native Swift (`Sources/Too
 |---|---|
 | Apple's firmware list | `https://itunes.apple.com/check/version` (Finder's list), cached for a day; current firmware per model with Apple's SHA-1 |
 | Build manifest of a remote IPSW | HTTP range requests against Apple's CDN (ZIP64 central directory, then only `BuildManifest.plist`) — about 0.3 s instead of downloading 8+ GB |
-| Signing status | A TSS request to `gs.apple.com` for the model's erase identity, built as libtatsu builds the AP request (no baseband ticket; skipped components; request rules; `Ap,*` identity values), with a random ECID and nonce. STATUS 0 = signed, 94 = not signed |
-| Downloads | `URLSessionDownloadTask` with resume data kept next to the file; kept only when the SHA-1 matches Apple's |
+| Signing status | A TSS request to `gs.apple.com` for the selected board's identity, built as libtatsu builds the AP request, with a random ECID and nonce. A known board never falls back to another identity. Installation checks the exact requested Update/Erase identity; TSS acceptance is a signing check, not completed device personalization |
+| Downloads | `URLSessionDownloadTask` with resume data kept next to the file; catalog SHA-1 mismatch rejects/deletes the stage. The typed result distinguishes catalog SHA-1 match from unavailable catalog digest; local SHA-256 is separate |
 | Library | IPSWs are read with the app's own ZIP reader (now with ZIP64); SHA-1 and SHA-256 with CryptoKit |
 | Recovery mode | Enter: lockdown `EnterRecovery` (native). Detect: `irecovery -q` every 3 s while the page is open. Exit: `irecovery -i ECID -n` |
-| Install | `idevicerestore --plain-progress --no-input --cache-path … --logfile … --udid/--ecid … [--erase] IPSW`; progress steps parsed from `progress: <step> <fraction>`; Stop is ignored once the system is being written |
-| Check Before Installing | Model and install type from the manifest, Apple signing, and `idevicerestore --no-action` (finds the device, changes nothing) |
+| Install | A `ValidatedFirmwareInstall` binds file SHA-256/metadata, firmware version/build, exact target, requested mode, exact manifest identity, TSS result, helper SHA-256 and timed `--no-action` result. `--ecid` and exact `--variant` bind the command; Update has no erase fallback. Stop and normal termination are refused from Preparing >=0.9 until the owned helper exits, with balanced sudden-termination protection |
+| Check Before Installing | Read-only readiness preview; mandatory validation repeats after typed confirmation. `--no-action` detects the exact ECID, model, board and mode but exits before firmware identity/signing checks, which the app enforces separately |
 
 ### 10.2 Verification
 
@@ -512,7 +512,10 @@ Everything that does not need the restore protocol is native Swift (`Sources/Too
   choice, the TSS request (components, rules, skipped baseband, copied identity values) and
   reply handling, remote manifest reading against a fake range server, the library and checksums,
   `irecovery -q` parsing, install command vectors (no shell, validated UDID/ECID), progress and
-  failure parsing, the streaming install runner, and the preflight checks.
+  failure parsing, the streaming install runner, and the preflight checks. `FirmwareInstallSafetyTests`
+  and `FirmwareTerminationTests` also exercise identity/mode refusal, rejected and unknown TSS,
+  stale/replaced files and helpers, download provenance, critical cancellation, quit policy and
+  counter balance. These deterministic fixtures do not establish real-device install or native Cmd-Q behavior.
 - Network tests (`RealFirmwareTests`, opt-in with `IDT_NETWORK_TESTS=1`), run 2026-09-29: Apple's
   list gives iPhone18,1 → 27.0.1 (24A446); its manifest is read from Apple's CDN by range
   requests; Apple's signing server answers **Signed** for it. The helpers run (`idevicerestore
@@ -522,3 +525,11 @@ Everything that does not need the restore protocol is native Swift (`Sources/Too
 **Not verified on hardware:** entering or leaving recovery mode, DFU detection, Check Before
 Installing against a device, and Update or Restore on a real device. These need a device that
 can be erased and are left for a supervised test.
+
+## 11. Local Security Analysis integration
+
+The local working tree adds Security Analysis for explicitly selected local evidence and
+commit-pinned threat intelligence. Its pipeline and boundaries are described in
+[the Security Analysis architecture](docs/architecture.md#security-analysis).
+The older dated Python parity matrix is preserved in the consolidation audit and does not
+replace the current firmware behavior or establish live physical-device validation.

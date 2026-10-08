@@ -19,6 +19,7 @@
 		296F9F5D4685AB10A7B27CA6 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 791078D9EF3EC6308839270F /* AppModel.swift */; };
 		42E12E11EB7BA75B9D50C3E8 /* ReconnectGuideView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B26E835D20074A0489176A15 /* ReconnectGuideView.swift */; };
 		4610E70974BDF2EAD32B8303 /* FirmwareView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32872FC2AF66DD024EA035E2 /* FirmwareView.swift */; };
+		493D4952FA985AF0CA0A7AC5 /* SecurityAnalysisView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D627FE5991933CA062A7745B /* SecurityAnalysisView.swift */; };
 		58CE6E900B85D91761091C12 /* ShortcutReferenceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50A5A2B1435E385D65A1EA31 /* ShortcutReferenceView.swift */; };
 		743B753A384188F88D118565 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6641462093807C7726C77E6 /* ContentView.swift */; };
 		74E2D8771554772F6F5085DB /* DeveloperImageModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A42E01F498D8AE9BAE52EA83 /* DeveloperImageModel.swift */; };
@@ -34,6 +35,7 @@
 		C11140FE6CD2D8612115AF8F /* ReferenceViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 117839C38E19BA74C82D8382 /* ReferenceViews.swift */; };
 		E0A3673F60ACD7FFF3801DFC /* ScreenshotHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10F7407E0C32BF6634D85B5 /* ScreenshotHarness.swift */; };
 		E374C2EAE2467F2B1D01215E /* ToolkitFeatures in Frameworks */ = {isa = PBXBuildFile; productRef = 529398E755DBC14015ADEA9B /* ToolkitFeatures */; };
+		E7A37DFF9FF0F68ABE51BD0C /* SecurityAnalysisModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DDC0E48182D2C63DFB57618 /* SecurityAnalysisModel.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -51,11 +53,13 @@
 		192082EDB2AA8A31B4DE9A43 /* DeviceViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceViews.swift; sourceTree = "<group>"; };
 		2095C064BD8BE67389318E84 /* SmokeUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmokeUITests.swift; sourceTree = "<group>"; };
 		32872FC2AF66DD024EA035E2 /* FirmwareView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirmwareView.swift; sourceTree = "<group>"; };
+		3DDC0E48182D2C63DFB57618 /* SecurityAnalysisModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecurityAnalysisModel.swift; sourceTree = "<group>"; };
 		50A5A2B1435E385D65A1EA31 /* ShortcutReferenceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutReferenceView.swift; sourceTree = "<group>"; };
 		585ECC84A09B869053F28246 /* LocationModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationModel.swift; sourceTree = "<group>"; };
 		599C314C6B21A9A615B04C7A /* iOSDeveloperToolkit.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = iOSDeveloperToolkit.entitlements; sourceTree = "<group>"; };
 		5FC5D72518E6E2101A0B339B /* iOSDeveloperToolkitApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSDeveloperToolkitApp.swift; sourceTree = "<group>"; };
 		64CADCDAC59205AFA532EF87 /* ActionsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionsViews.swift; sourceTree = "<group>"; };
+		6BF9453E787F70E21D026A1B /* security-review-candidate */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "security-review-candidate"; path = .; sourceTree = SOURCE_ROOT; };
 		791078D9EF3EC6308839270F /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		7F724AF45C9EBAFFC75A5710 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		8C6560689EC51FF96E5F71E7 /* iOSDeveloperToolkit.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iOSDeveloperToolkit.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -69,13 +73,13 @@
 		C6641462093807C7726C77E6 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		CD1BCA4BFD074C07318C65CC /* LiveLogsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveLogsModel.swift; sourceTree = "<group>"; };
 		D34F678B9113D08044E08644 /* FeatureModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeatureModels.swift; sourceTree = "<group>"; };
+		D627FE5991933CA062A7745B /* SecurityAnalysisView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecurityAnalysisView.swift; sourceTree = "<group>"; };
 		DA238102E7E6CB9B5DB927EC /* FirmwareModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirmwareModel.swift; sourceTree = "<group>"; };
 		DC1B9D11BA0887FAFECDC9DF /* DeveloperImageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeveloperImageView.swift; sourceTree = "<group>"; };
 		E7E525F882B8476846CFA326 /* ReadinessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadinessView.swift; sourceTree = "<group>"; };
 		EC558873395BD2D10988B49F /* LocationViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationViews.swift; sourceTree = "<group>"; };
 		EF4B82A9EAB2FEBF4FBE2FA2 /* AppsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppsViews.swift; sourceTree = "<group>"; };
 		F10F7407E0C32BF6634D85B5 /* ScreenshotHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotHarness.swift; sourceTree = "<group>"; };
-		F4A6CCABAC76B07D54F044FC /* iOS-Developer-Toolkit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "iOS-Developer-Toolkit"; path = .; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -102,6 +106,7 @@
 				CD1BCA4BFD074C07318C65CC /* LiveLogsModel.swift */,
 				585ECC84A09B869053F28246 /* LocationModel.swift */,
 				F10F7407E0C32BF6634D85B5 /* ScreenshotHarness.swift */,
+				3DDC0E48182D2C63DFB57618 /* SecurityAnalysisModel.swift */,
 			);
 			path = Model;
 			sourceTree = "<group>";
@@ -147,6 +152,7 @@
 				E7E525F882B8476846CFA326 /* ReadinessView.swift */,
 				B26E835D20074A0489176A15 /* ReconnectGuideView.swift */,
 				117839C38E19BA74C82D8382 /* ReferenceViews.swift */,
+				D627FE5991933CA062A7745B /* SecurityAnalysisView.swift */,
 				50A5A2B1435E385D65A1EA31 /* ShortcutReferenceView.swift */,
 			);
 			path = Views;
@@ -177,7 +183,7 @@
 		9F007AA80ECE5A10D372536D /* Packages */ = {
 			isa = PBXGroup;
 			children = (
-				F4A6CCABAC76B07D54F044FC /* iOS-Developer-Toolkit */,
+				6BF9453E787F70E21D026A1B /* security-review-candidate */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -313,6 +319,8 @@
 				42E12E11EB7BA75B9D50C3E8 /* ReconnectGuideView.swift in Sources */,
 				C11140FE6CD2D8612115AF8F /* ReferenceViews.swift in Sources */,
 				E0A3673F60ACD7FFF3801DFC /* ScreenshotHarness.swift in Sources */,
+				E7A37DFF9FF0F68ABE51BD0C /* SecurityAnalysisModel.swift in Sources */,
+				493D4952FA985AF0CA0A7AC5 /* SecurityAnalysisView.swift in Sources */,
 				58CE6E900B85D91761091C12 /* ShortcutReferenceView.swift in Sources */,
 				1623B3509BB855616EA203F0 /* iOSDeveloperToolkitApp.swift in Sources */,
 			);

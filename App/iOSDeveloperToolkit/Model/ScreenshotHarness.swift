@@ -195,7 +195,7 @@ enum ScreenshotHarness {
     }
 
     static func sidebar(in window: NSWindow) -> NSTableView? {
-        tables(in: window.contentView?.superview ?? window.contentView).first { $0.numberOfRows == Workspace.allCases.count + Workspace.Group.allCases.count }
+        tables(in: window.contentView?.superview ?? window.contentView).first { $0.numberOfRows == Workspace.sidebarWorkspaces.count + 2 }
     }
 
     static func tables(in view: NSView?) -> [NSTableView] {

@@ -16,6 +16,7 @@ public enum Workspace: String, CaseIterable, Codable, Sendable, Identifiable {
     case actions
     case backup
     case evidence
+    case securityAnalysis
     case externalTools
     case activity
     case help
@@ -23,23 +24,36 @@ public enum Workspace: String, CaseIterable, Codable, Sendable, Identifiable {
 
     public var id: String { rawValue }
 
+    /// Presentation order is separate from persisted identifiers and legacy numbered shortcuts.
+    public static let primaryWorkspaces: [Workspace] = [
+        .overview, .device, .readiness, .location, .liveLogs, .actions, .apps,
+        .backup, .installApp, .evidence, .externalTools, .help, .safety,
+    ]
+    public static let additionalWorkspaces: [Workspace] = [.firmware, .securityAnalysis]
+    public static var sidebarWorkspaces: [Workspace] { primaryWorkspaces + additionalWorkspaces }
+    public static var navigationOrder: [Workspace] { sidebarWorkspaces + [.activity] }
+
+    /// Older profiles and shortcuts still open Developer Image inside Device & DDI.
+    public var sidebarWorkspace: Workspace { self == .developerImage ? .device : self }
+
     public var title: String {
         switch self {
-        case .overview: return "Overview"
-        case .device: return "Device"
+        case .overview: return "Home"
+        case .device: return "Device & DDI"
         case .developerImage: return "Developer Image"
         case .firmware: return "Firmware"
-        case .readiness: return "Readiness Check"
-        case .apps: return "Apps"
-        case .installApp: return "Install App"
+        case .readiness: return "Capability Matrix"
+        case .apps: return "Installed Apps"
+        case .installApp: return "Sideload IPA"
         case .location: return "Location Lab"
         case .liveLogs: return "Live Logs"
-        case .actions: return "Actions"
+        case .actions: return "Command Center"
         case .backup: return "Backup"
         case .evidence: return "Evidence Capture"
-        case .externalTools: return "External Tools"
+        case .securityAnalysis: return "Security Analysis"
+        case .externalTools: return "Ecosystem Tools"
         case .activity: return "Session Activity"
-        case .help: return "Tool Reference"
+        case .help: return "Man Pages"
         case .safety: return "Scope & Safety"
         }
     }
@@ -58,6 +72,7 @@ public enum Workspace: String, CaseIterable, Codable, Sendable, Identifiable {
         case .actions: return "bolt"
         case .backup: return "externaldrive.badge.timemachine"
         case .evidence: return "archivebox"
+        case .securityAnalysis: return "shield.checkered"
         case .externalTools: return "wrench.and.screwdriver"
         case .activity: return "clock.arrow.circlepath"
         case .help: return "book"
@@ -68,10 +83,10 @@ public enum Workspace: String, CaseIterable, Codable, Sendable, Identifiable {
     public var subtitle: String {
         switch self {
         case .overview: return "What you can do and where to start"
-        case .device: return "Identity, trust, Developer Mode, and developer services"
+        case .device: return "Identity, trust, Developer Mode, and Developer Image workflows"
         case .developerImage: return "Check, mount, and unmount Apple's developer image"
         case .firmware: return "IPSW library, Apple signing status, recovery mode, update and restore"
-        case .readiness: return "Check every prerequisite before you start"
+        case .readiness: return "Current-device prerequisites and real-device compatibility history"
         case .apps: return "Installed apps: search, sizes, launch, and remove"
         case .installApp: return "Inspect an .ipa or .app, then install it"
         case .location: return "Simulate coordinates, routes, and GPX tracks"
@@ -79,7 +94,8 @@ public enum Workspace: String, CaseIterable, Codable, Sendable, Identifiable {
         case .actions: return "Guided device and developer actions"
         case .backup: return "Encrypted local backups and forensic handoffs"
         case .evidence: return "Hashed, documented evidence collection"
-        case .externalTools: return "Optional tools you install separately"
+        case .securityAnalysis: return "Local IOC analysis, correlation, and reports"
+        case .externalTools: return "Validate Meta idb Companion and inspect its target inventory"
         case .activity: return "Everything this session has run"
         case .help: return "Built-in help for the Apple tools the app uses"
         case .safety: return "What the app can and cannot do"
@@ -99,7 +115,7 @@ public enum Workspace: String, CaseIterable, Codable, Sendable, Identifiable {
         case .overview: return .start
         case .device, .developerImage, .firmware, .readiness, .apps, .installApp: return .device
         case .location, .liveLogs, .actions: return .develop
-        case .backup, .evidence, .externalTools: return .data
+        case .backup, .evidence, .securityAnalysis, .externalTools: return .data
         case .activity, .help, .safety: return .reference
         }
     }

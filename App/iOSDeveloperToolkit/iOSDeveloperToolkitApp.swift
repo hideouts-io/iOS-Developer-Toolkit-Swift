@@ -54,33 +54,85 @@ struct IOSDeveloperToolkitApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var model: AppModel?
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        MainActor.assumeIsolated {
+            let critical = model?.firmware.terminationBlocked == true
+            if critical { explainFirmwareWriting() }
+            return FirmwareTerminationPolicy.terminateAfterLastWindowClosed(critical: critical)
+        }
+    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         MainActor.assumeIsolated {
             guard let model else { return .terminateNow }
-            let busy = !model.operations.isEmpty || model.logs.sessions.contains { $0.state.isActive }
-            if busy {
+            let busy = !model.operations.isEmpty || model.firmware.isInstalling || model.logs.sessions.contains { $0.state.isActive }
+            let decision = FirmwareTerminationPolicy.decision(critical: model.firmware.terminationBlocked, busy: busy)
+            if decision == .deny {
+                explainFirmwareWriting()
+                return .terminateCancel
+            }
+            if decision == .confirm {
                 let alert = NSAlert()
                 alert.messageText = "Operations are still running"
                 alert.informativeText = "Quitting stops them. Live log captures are saved and finalized; backups and evidence collections that are still running will be incomplete."
+                if model.firmware.isInstalling {
+                    alert.informativeText += " Cancelling firmware installation before writing can leave an incomplete operation and may require another install. Quit becomes unavailable once firmware writing starts."
+                }
                 alert.addButton(withTitle: "Quit Anyway")
                 alert.addButton(withTitle: "Cancel")
                 guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
             }
-            if let target = model.location.lastSimulatedTarget {
-                // Leave devices as we found them: clear a location this session simulated.
-                let controller = model.executor.location
-                let semaphore = DispatchSemaphore(value: 0)
-                Task.detached {
-                    try? await controller.clear(on: target)
-                    semaphore.signal()
-                }
-                _ = semaphore.wait(timeout: .now() + 8)
+            // A modal alert runs a nested event loop. Writing may have started while it was open.
+            guard !model.firmware.terminationBlocked else {
+                explainFirmwareWriting()
+                return .terminateCancel
             }
-            model.stop()
-            return .terminateNow
+            if model.firmware.isInstalling {
+                Task { @MainActor in
+                    guard await model.firmware.cancelForTermination() else {
+                        self.explainFirmwareWriting()
+                        sender.reply(toApplicationShouldTerminate: false)
+                        return
+                    }
+                    sender.reply(toApplicationShouldTerminate: self.finishTermination(model) == .terminateNow)
+                }
+                return .terminateLater
+            }
+            return finishTermination(model)
         }
+    }
+
+    @MainActor
+    private func explainFirmwareWriting() {
+        let alert = NSAlert()
+        alert.messageText = "Firmware is being written"
+        alert.informativeText = "Normal application termination is disabled until the installer exits. Keep this Mac powered and the device connected. This protection cannot prevent Force Quit, power loss or cable removal."
+        alert.addButton(withTitle: "Keep Running")
+        alert.runModal()
+    }
+
+    @MainActor
+    private func finishTermination(_ model: AppModel) -> NSApplication.TerminateReply {
+        guard !model.firmware.terminationBlocked else {
+            explainFirmwareWriting()
+            return .terminateCancel
+        }
+        if let target = model.location.lastSimulatedTarget {
+            // Leave devices as we found them: clear a location this session simulated.
+            let controller = model.executor.location
+            let semaphore = DispatchSemaphore(value: 0)
+            Task.detached {
+                try? await controller.clear(on: target)
+                semaphore.signal()
+            }
+            _ = semaphore.wait(timeout: .now() + 8)
+        }
+        guard !model.firmware.terminationBlocked else {
+            explainFirmwareWriting()
+            return .terminateCancel
+        }
+        model.stop()
+        return .terminateNow
     }
 }
 

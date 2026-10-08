@@ -31,12 +31,12 @@ struct OverviewView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     step(1, "Connect and trust", "Connect the iPhone or iPad with a USB cable, unlock it, and tap Trust. Simulators appear automatically when Xcode is installed.")
                     step(2, "Check readiness", "Run the Readiness Check to see exactly which features are available and what to fix.")
-                    step(3, "Do the work", "Use Actions, Location Lab, Live Logs, Apps, or Backup. Every change asks for confirmation and names the device it affects.")
+                    step(3, "Do the work", "Use Command Center, Location Lab, Live Logs, Installed Apps, or Backup. Every change asks for confirmation and names the device it affects.")
                     step(4, "Clean up", "Stop streams, clear simulated locations, and store saved output somewhere protected.")
                 }
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 12)], spacing: 12) {
-                ForEach(Workspace.allCases.filter { $0 != .overview }) { workspace in
+                ForEach((Workspace.sidebarWorkspaces + [.activity]).filter { $0 != .overview }) { workspace in
                     Button {
                         model.workspace = workspace
                     } label: {
@@ -147,12 +147,6 @@ struct DeviceDetailView: View {
         }
         .sheet(item: $confirmation) { pending in
             ConfirmationSheet(title: pending.title, detail: pending.detail, requirement: pending.requirement, target: pending.target, commandPreview: nil, onConfirm: pending.action)
-        }
-        .task(id: model.selectedDevice?.id) {
-            // Check the developer image once per device when it is shown (never changes the device).
-            if let device = model.selectedDevice, device.kind != .simulator, model.developerImage.status(for: device) == nil {
-                await model.developerImage.refresh(device, app: model)
-            }
         }
     }
 

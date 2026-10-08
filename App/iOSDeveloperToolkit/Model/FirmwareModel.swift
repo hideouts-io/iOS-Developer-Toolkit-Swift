@@ -28,6 +28,23 @@ struct FirmwareDevice: Hashable {
         }
     }
 
+    func installSelection(ipsw: URL, mode: FirmwareInstall.Mode) -> FirmwareInstallSelection {
+        let chip: Int?
+        let board: Int?
+        if case .recovery(let device) = state {
+            func number(_ text: String?) -> Int? {
+                guard let text else { return nil }
+                return text.lowercased().hasPrefix("0x") ? Int(text.dropFirst(2), radix: 16) : Int(text)
+            }
+            chip = number(device.chipID)
+            board = number(device.boardID)
+        } else {
+            chip = nil
+            board = nil
+        }
+        return FirmwareInstallSelection(ipsw: ipsw, target: installTarget, productType: productType, deviceClass: deviceClass, chipID: chip, boardID: board, mode: mode)
+    }
+
     var modeLabel: String {
         switch state {
         case .normal: return "Normal"
@@ -82,9 +99,11 @@ final class FirmwareModel {
     private(set) var helperProblem: String?
 
     // Installing.
-    var selectedIPSW: String?
-    var mode: FirmwareInstall.Mode = .update
+    var selectedIPSW: String? { didSet { if selectedIPSW != oldValue { resetPreflight() } } }
+    var mode: FirmwareInstall.Mode = .update { didSet { if mode != oldValue { resetPreflight() } } }
     private(set) var preflight: [FirmwarePreflight.Check] = []
+    private(set) var validatedInstall: ValidatedFirmwareInstall?
+    private var preflightRevision = UUID()
     private(set) var isPreflighting = false
     private(set) var isInstalling = false
     private(set) var installStep: String?
@@ -92,6 +111,12 @@ final class FirmwareModel {
     private(set) var installLog: [String] = []
     private(set) var pastPointOfNoReturn = false
     private(set) var lastLogFile: URL?
+    private var installationTask: Task<Void, Never>?
+    private var writeProtection: FirmwareWriteProtection?
+
+    /// Read the synchronized guard directly: progress may reach the critical phase before a
+    /// queued UI update arrives on the main actor.
+    var terminationBlocked: Bool { writeProtection?.isCritical == true }
 
     let directory = IPSWLibrary.defaultDirectory()
     private var cacheDirectory: URL {
@@ -114,6 +139,18 @@ final class FirmwareModel {
 
     // MARK: Apple's firmware
 
+    private func signingKey(_ firmwareID: String, deviceClass: String?) -> String {
+        firmwareID + "\u{0}" + (deviceClass?.lowercased() ?? "generic")
+    }
+
+    func signingStatus(_ firmwareID: String, deviceClass: String?) -> FirmwareSigning.Status? {
+        signing[signingKey(firmwareID, deviceClass: deviceClass)]
+    }
+
+    func isCheckingSigning(_ firmwareID: String, deviceClass: String?) -> Bool {
+        checkingSigning.contains(signingKey(firmwareID, deviceClass: deviceClass))
+    }
+
     func loadCatalog(productType: String, app: AppModel, force: Bool = false) async {
         guard !isLoadingCatalog, force || releasesProductType != productType else { return }
         isLoadingCatalog = true
@@ -135,31 +172,33 @@ final class FirmwareModel {
     /// Asks Apple whether it signs `release` for this model. Only the firmware's build manifest is
     /// read (not the whole IPSW); the request uses a random device ID.
     func checkSigning(_ release: FirmwareRelease, deviceClass: String?, app: AppModel) async {
-        guard !checkingSigning.contains(release.build) else { return }
-        checkingSigning.insert(release.build)
-        defer { checkingSigning.remove(release.build) }
+        let key = signingKey(release.id, deviceClass: deviceClass)
+        guard !checkingSigning.contains(key) else { return }
+        checkingSigning.insert(key)
+        defer { checkingSigning.remove(key) }
         let status = await app.run("Check signing for \(release.version)", workspace: .firmware, target: nil, transport: "gs.apple.com (TSS)", presentErrors: false) { _ in
             let manifest = try FirmwareManifest.parse(try await RemoteArchive.file(named: FirmwareManifest.fileName, in: release.url))
-            guard let identity = manifest.identity(deviceClass: deviceClass) ?? manifest.identity() else {
+            guard manifest.supportedProductTypes.contains(release.productType), let identity = FirmwareSigning.identityForCheck(manifest: manifest, deviceClass: deviceClass) else {
                 return FirmwareSigning.Status.unknown("The firmware has no install for this device model.")
             }
             return await FirmwareSigning.check(identity: identity)
         }
-        signing[release.build] = status ?? .unknown("The firmware's build manifest could not be read from Apple's server.")
+        signing[key] = status ?? .unknown("The firmware's build manifest could not be read from Apple's server.")
     }
 
     func checkSigning(_ file: IPSWFile, deviceClass: String?, app: AppModel) async {
-        guard !checkingSigning.contains(file.id) else { return }
-        checkingSigning.insert(file.id)
-        defer { checkingSigning.remove(file.id) }
-        guard let identity = file.manifest.identity(deviceClass: deviceClass) ?? file.manifest.identity() else {
-            signing[file.id] = .unknown("The firmware has no install for this device model.")
+        let key = signingKey(file.id, deviceClass: deviceClass)
+        guard !checkingSigning.contains(key) else { return }
+        checkingSigning.insert(key)
+        defer { checkingSigning.remove(key) }
+        guard let identity = FirmwareSigning.identityForCheck(manifest: file.manifest, deviceClass: deviceClass) else {
+            signing[key] = .unknown("The firmware has no install for this device model.")
             return
         }
         let status = await app.run("Check signing for \(file.title)", workspace: .firmware, target: nil, transport: "gs.apple.com (TSS)", presentErrors: false) { _ in
             await FirmwareSigning.check(identity: identity)
         }
-        signing[file.id] = status ?? .unknown("Apple's signing server could not be reached.")
+        signing[key] = status ?? .unknown("Apple's signing server could not be reached.")
     }
 
     // MARK: Downloads
@@ -182,8 +221,8 @@ final class FirmwareModel {
             downloads[release.build] = nil
             downloadTasks[release.build] = nil
             if let result {
-                verification[result.path] = "Matches Apple's checksum (SHA-1)."
-                app.statusMessage = "Downloaded \(release.fileName) and verified it."
+                verification[result.url.path] = result.provenance.explanation + "\nLocal SHA-256 \(result.sha256)"
+                app.statusMessage = "Downloaded \(release.fileName). \(result.provenance.explanation)"
                 await scanLibrary()
             }
         }
@@ -305,47 +344,83 @@ final class FirmwareModel {
 
     var selectedFile: IPSWFile? { library.first { $0.id == selectedIPSW } }
 
-    func resetPreflight() { preflight = [] }
-
-    /// Checks the model, the build identity, Apple's signing, and that idevicerestore finds the
-    /// device (`--no-action`). Nothing on the device is changed.
-    func runPreflight(_ device: FirmwareDevice, app: AppModel) async {
-        guard let file = selectedFile, let helper = helper(.idevicerestore) else { return }
-        isPreflighting = true
-        defer { isPreflighting = false }
-        var checks = FirmwarePreflight.localChecks(ipsw: file, productType: device.productType, deviceClass: device.deviceClass, mode: mode)
-        preflight = checks + [FirmwarePreflight.Check(title: "Signed by Apple", passed: nil, detail: "Checking…"), FirmwarePreflight.Check(title: "Device found by the installer", passed: nil, detail: "Checking…")]
-        await checkSigning(file, deviceClass: device.deviceClass, app: app)
-        checks.append(FirmwarePreflight.signingCheck(signing[file.id] ?? .unknown("Not checked.")))
-        preflight = checks + [FirmwarePreflight.Check(title: "Device found by the installer", passed: nil, detail: "Checking…")]
-        if case .demo = device.state {
-            checks.append(FirmwarePreflight.Check(title: "Device found by the installer", passed: false, detail: "Demo Mode has no device."))
-        } else {
-            checks.append(await detect(device, file: file, helper: helper, app: app))
-        }
-        preflight = checks
+    func currentDevice(in app: AppModel) -> FirmwareDevice? {
+        if let recoveryDevice { return FirmwareDevice(recoveryDevice) }
+        if let device = app.selectedDevice, device.kind == .physical || device.kind == .demo { return FirmwareDevice(device) }
+        return nil
     }
 
-    private func detect(_ device: FirmwareDevice, file: IPSWFile, helper: URL, app: AppModel) async -> FirmwarePreflight.Check {
-        let runner = app.runner
-        guard let paths = try? self.paths() else { return FirmwarePreflight.Check(title: "Device found by the installer", passed: false, detail: "The firmware folder could not be created.") }
-        let mode = mode
-        let output = LockedValue<[String]>([])
-        let request: CommandRequest
+    func resetPreflight() {
+        preflightRevision = UUID()
+        preflight = []
+        validatedInstall = nil
+    }
+
+    func canInstall(_ device: FirmwareDevice) -> Bool {
+        guard !isInstalling, !isPreflighting, device.state != .demo, let file = selectedFile, let plan = validatedInstall else { return false }
         do {
-            request = try FirmwareInstall.request(helper: helper, ipsw: file.url, mode: mode, target: device.installTarget, cacheDirectory: paths.cache, logFile: paths.log, preflightOnly: true)
-        } catch {
-            return FirmwarePreflight.Check(title: "Device found by the installer", passed: false, detail: (error as? ToolkitError)?.message ?? error.localizedDescription)
+            try plan.requireMatches(device.installSelection(ipsw: file.url, mode: mode))
+            try plan.requireCurrent(now: Date())
+            return true
+        } catch { return false }
+    }
+
+    /// Produces a read-only readiness preview. Installation repeats all mandatory validation
+    /// after confirmation, so neither a cached signing badge nor this preview can bypass it.
+    func runPreflight(_ device: FirmwareDevice, app: AppModel) async {
+        guard !isPreflighting, !isInstalling, let file = selectedFile else { return }
+        isPreflighting = true
+        defer { isPreflighting = false }
+        _ = await validate(device.installSelection(ipsw: file.url, mode: mode), device: device, app: app)
+    }
+
+    private func validate(_ selection: FirmwareInstallSelection, device: FirmwareDevice, app: AppModel) async -> ValidatedFirmwareInstall? {
+        resetPreflight()
+        let revision = preflightRevision
+        guard device.state != .demo, let helper = helper(.idevicerestore) else {
+            preflight = [.init(title: "Install readiness", passed: false, detail: device.state == .demo ? "Demo Mode has no device." : helperProblem ?? "The firmware helper is unavailable.")]
+            return nil
         }
-        let result = await app.run("Firmware preflight", workspace: .firmware, target: device.target, transport: "idevicerestore --no-action", argv: request.arguments, outputPaths: [paths.log.path], presentErrors: false) { _ in
-            try await FirmwareInstall.run(request, runner: runner, progress: { _, _ in }, line: { line in output.withLock { $0.append(line) } })
+        let paths: (cache: URL, log: URL)
+        do { paths = try self.paths() } catch {
+            preflight = [.init(title: "Install readiness", passed: false, detail: error.localizedDescription)]
+            app.present(error)
+            return nil
+        }
+        preflight = [.init(title: "Install readiness", passed: nil, detail: "Checking the file, exact device, install identity and Apple signing…")]
+        let runner = app.runner
+        let expected = releases.first { $0.fileName == selection.ipsw.lastPathComponent && $0.productType == selection.productType }?.sha1
+        let failure = LockedValue<String?>(nil)
+        let plan = await app.run("Validate firmware \(selection.mode.title)", workspace: .firmware, target: device.target, transport: "Local SHA-256, idevicerestore --no-action, Apple TSS", outputPaths: [paths.log.path], presentErrors: false) { operation in
+            operation.report("Checking firmware and the connected device")
+            do {
+                return try await ValidatedFirmwareInstall.validate(selection: selection, helper: helper, cacheDirectory: paths.cache, logFile: paths.log,
+                                                                  catalogSHA1: expected, runner: runner, signingTransport: AppleTSSTransport())
+            } catch {
+                failure.withLock { $0 = (error as? ToolkitError)?.message ?? error.localizedDescription }
+                throw error
+            }
         }
         lastLogFile = paths.log
-        if result != nil {
-            let found = output.current.last { $0.localizedCaseInsensitiveContains("found device in") || $0.localizedCaseInsensitiveContains("mode") }
-            return FirmwarePreflight.Check(title: "Device found by the installer", passed: true, detail: found ?? "idevicerestore found the device.")
+        guard revision == preflightRevision else { return nil }
+        guard let current = currentDevice(in: app), let file = selectedFile, current.installSelection(ipsw: file.url, mode: mode) == selection else {
+            resetPreflight()
+            preflight = [.init(title: "Install readiness", passed: false, detail: "The selected device, firmware or mode changed. Check again.")]
+            return nil
         }
-        return FirmwarePreflight.Check(title: "Device found by the installer", passed: false, detail: FirmwareInstall.failureReason(output: output.current.joined(separator: "\n")))
+        guard let plan else {
+            preflight = [.init(title: "\(selection.mode.title) unavailable", passed: false, detail: failure.current ?? "Validation was stopped. Check again before installing.")]
+            return nil
+        }
+        validatedInstall = plan
+        preflight = [
+            .init(title: "Device identity", passed: true, detail: "Verified: \(plan.device.productType), \(plan.device.deviceClass.uppercased())."),
+            .init(title: "\(selection.mode.title) identity", passed: true, detail: selection.mode == .update ? "Data-preserving Update identity verified." : "Erase identity verified. Restore erases all data."),
+            .init(title: "Apple signing", passed: true, detail: "Signed for the matching install identity."),
+            .init(title: "Installer preflight", passed: true, detail: "Passed for this device in \(plan.device.mode.rawValue) mode."),
+            .init(title: "Download integrity", passed: plan.downloadIntegrity == .appleCatalogSHA1Matched ? true : nil, detail: plan.downloadIntegrity.explanation),
+        ]
+        return plan
     }
 
     private func paths() throws -> (cache: URL, log: URL) {
@@ -353,63 +428,85 @@ final class FirmwareModel {
         try SecureFileIO.createPrivateDirectory(at: cache)
         try SecureFileIO.createPrivateDirectory(at: logDirectory)
         let stamp = ISO8601DateFormatter.string(from: Date(), timeZone: .current, formatOptions: [.withFullDate, .withTime])
-        return (cache, logDirectory.appendingPathComponent("idevicerestore-\(stamp).log"))
+        return (cache, logDirectory.appendingPathComponent("idevicerestore-\(stamp)-\(UUID().uuidString).log"))
     }
 
-    /// Installs the selected firmware. Stop works until the system starts being written; after
-    /// that the install always runs to the end, because stopping would leave the device unusable.
-    func install(_ device: FirmwareDevice, app: AppModel) async {
-        guard let file = selectedFile, let helper = helper(.idevicerestore), !isInstalling else { return }
+    /// Captures the confirmed selection, validates it afresh, and keeps ownership until the
+    /// helper exits. Critical cancellation is refused even through the global operation button.
+    func install(_ selection: FirmwareInstallSelection, device: FirmwareDevice, app: AppModel) async {
+        guard !isInstalling, !isPreflighting, let file = selectedFile,
+              let current = currentDevice(in: app), current == device,
+              current.installSelection(ipsw: file.url, mode: mode) == selection else {
+            app.present(ToolkitError.invalidInput("The confirmed device, firmware or install mode changed. Check again before installing."))
+            return
+        }
+        isInstalling = true
+        let protection = FirmwareWriteProtection(controller: FirmwareProcessTerminationControl())
+        writeProtection = protection
+        defer {
+            protection.complete()
+            writeProtection = nil
+            installationTask = nil
+            isInstalling = false
+            pastPointOfNoReturn = false
+        }
+        let task = Task { await performInstall(selection, device: device, app: app, protection: protection) }
+        installationTask = task
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: { task.cancel() }
+    }
+
+    /// Used by normal termination before writing. If a critical phase wins the cancellation
+    /// race, refuse quit; otherwise wait for installation ownership to finish before replying.
+    func cancelForTermination() async -> Bool {
+        guard !terminationBlocked else { return false }
+        guard let task = installationTask else { return true }
+        task.cancel()
+        guard !terminationBlocked else { return false }
+        await task.value
+        return !terminationBlocked
+    }
+
+    private func performInstall(_ selection: FirmwareInstallSelection, device: FirmwareDevice, app: AppModel, protection: FirmwareWriteProtection) async {
+        guard let plan = await validate(selection, device: device, app: app), !Task.isCancelled else { return }
         let request: CommandRequest
-        let logFile: URL
+        let paths: (cache: URL, log: URL)
         do {
-            let paths = try paths()
-            logFile = paths.log
-            request = try FirmwareInstall.request(helper: helper, ipsw: file.url, mode: mode, target: device.installTarget, cacheDirectory: paths.cache, logFile: paths.log, preflightOnly: false)
+            paths = try self.paths()
+            request = try FirmwareInstall.request(plan: plan, cacheDirectory: paths.cache, logFile: paths.log, now: Date())
         } catch {
             app.present(error)
             return
         }
-        isInstalling = true
         installStep = FirmwareInstall.steps[0]
         installFraction = 0
         installLog = []
         pastPointOfNoReturn = false
-        lastLogFile = logFile
-        defer { isInstalling = false }
+        lastLogFile = paths.log
         let runner = app.runner
-        let committed = LockedValue(false)
-        let result = await app.run("\(mode.title) \(file.title)", workspace: .firmware, target: device.target, transport: "idevicerestore", argv: request.arguments, outputPaths: [logFile.path]) { operation in
-            let helperTask = Task {
-                try await FirmwareInstall.run(request, runner: runner, progress: { step, fraction in
-                    if FirmwareInstall.isPastPointOfNoReturn(step: step) { committed.withLock { $0 = true } }
+        let result = await app.run("\(selection.mode.title) iOS \(plan.productVersion) (\(plan.productBuild))", workspace: .firmware, target: device.target, transport: "idevicerestore", argv: request.arguments, outputPaths: [paths.log.path]) { operation in
+                try await FirmwareInstall.run(plan: plan, cacheDirectory: paths.cache, logFile: paths.log, runner: runner, protection: protection, progress: { step, fraction in
                     operation.report(step, progress: fraction)
                     Task { @MainActor in
+                        guard self.writeProtection === protection else { return }
                         self.installStep = step
                         self.installFraction = fraction
-                        if FirmwareInstall.isPastPointOfNoReturn(step: step) { self.pastPointOfNoReturn = true }
+                        if protection.isCritical { self.pastPointOfNoReturn = true }
                     }
                 }, line: { line in
                     Task { @MainActor in
+                        guard self.writeProtection === protection else { return }
+                        if protection.isCritical { self.pastPointOfNoReturn = true }
                         self.installLog.append(line)
                         if self.installLog.count > 500 { self.installLog.removeFirst(100) }
                     }
                 })
-            }
-            return try await withTaskCancellationHandler {
-                try await helperTask.value
-            } onCancel: {
-                if committed.current {
-                    operation.report("Can't stop now: the system is being written. Keep the device connected.")
-                } else {
-                    helperTask.cancel()
-                }
-            }
         }
         if result != nil {
             installStep = "Done"
             installFraction = 1
-            app.statusMessage = "\(file.title) was installed on \(device.name). The device restarts and finishes setting up."
+            app.statusMessage = "iOS \(plan.productVersion) (\(plan.productBuild)) was installed on \(device.name). The device restarts and finishes setting up."
         }
     }
 

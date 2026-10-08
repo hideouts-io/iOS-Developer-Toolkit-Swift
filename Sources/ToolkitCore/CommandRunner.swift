@@ -157,8 +157,15 @@ public protocol CommandRunning: Sendable {
     func stream(_ request: CommandRequest) -> AsyncThrowingStream<CommandStreamEvent, Error>
 }
 
+/// A child whose owner must observe actual process exit even after requesting cancellation.
+public protocol OwnedCommandRunning: CommandRunning {
+    /// Keep the consuming task alive. Cancellation signals the child and the stream continues
+    /// delivering output until the child exits; only then does it throw a cancellation error.
+    func stream(_ request: CommandRequest, cancellation: CommandCancellation) -> AsyncThrowingStream<CommandStreamEvent, Error>
+}
+
 /// The production runner. It is the only type in the code base that creates `Process`.
-public struct ProcessCommandRunner: CommandRunning {
+public struct ProcessCommandRunner: OwnedCommandRunning {
     public init() {}
 
     public func run(_ request: CommandRequest) async throws -> CommandResult {
@@ -182,6 +189,24 @@ public struct ProcessCommandRunner: CommandRunning {
                 if case .cancelled = termination { execution.cancel() }
             }
             execution.start()
+        }
+    }
+
+    public func stream(_ request: CommandRequest, cancellation: CommandCancellation) -> AsyncThrowingStream<CommandStreamEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let execution = ProcessExecution(request: request, continuation: continuation)
+            cancellation.register { execution.cancel() }
+            continuation.onTermination = { termination in
+                cancellation.clear()
+                if case .cancelled = termination { execution.cancel() }
+            }
+            guard !cancellation.isCancelled else {
+                continuation.finish(throwing: ToolkitError.cancelled(request.displayName))
+                return
+            }
+            execution.start()
+            // Cancellation can precede launch, when there is no PID to signal yet.
+            if cancellation.isCancelled { execution.cancel() }
         }
     }
 }

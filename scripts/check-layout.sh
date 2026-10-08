@@ -12,7 +12,7 @@ for size in 1180x700 900x560; do
   cat "$out/window-geometry.txt"; echo
   if [[ -e "$out/TIMEOUT" ]]; then echo "::error::screenshot harness timed out at $size"; exit 1; fi
   pages="$(grep -c ': window (' "$out/window-geometry.txt" || true)"
-  if (( pages < 16 )); then echo "::error::only $pages pages rendered at $size"; exit 1; fi
+  if (( pages < 17 )); then echo "::error::only $pages pages rendered at $size"; exit 1; fi
   if grep -E 'SQUEEZED|OVERFLOW' "$out/window-geometry.txt"; then echo "::error::layout problem at $size"; exit 1; fi
 done
 echo "layout OK"

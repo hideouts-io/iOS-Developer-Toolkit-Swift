@@ -123,8 +123,37 @@ public enum IPSWLibrary {
 
 // MARK: - Downloading
 
-/// Downloads an IPSW into the library, resuming a previous attempt when possible, and keeps it
-/// only when its SHA-1 matches Apple's.
+/// The source of a download's integrity result. A local hash alone is not an Apple checksum.
+public enum FirmwareDownloadProvenance: Sendable, Hashable {
+    case appleCatalogSHA1Matched
+    case appleCatalogDigestUnavailable
+    case digestMismatch
+
+    public var explanation: String {
+        switch self {
+        case .appleCatalogSHA1Matched: return "Apple catalog SHA-1 matched."
+        case .appleCatalogDigestUnavailable: return "Apple's catalog checksum is unavailable. SHA-256 was computed locally."
+        case .digestMismatch: return "Does not match Apple's catalog checksum. Download the firmware again."
+        }
+    }
+
+    public static func assess(sha1: String, catalogSHA1: String?) throws -> Self {
+        guard let catalogSHA1 else { return .appleCatalogDigestUnavailable }
+        guard catalogSHA1.range(of: #"^[0-9A-Fa-f]{40}$"#, options: .regularExpression) != nil else {
+            throw ToolkitError.invalidInput("Apple's catalog checksum is not a SHA-1 digest. Refresh the firmware list.")
+        }
+        return sha1 == catalogSHA1.lowercased() ? .appleCatalogSHA1Matched : .digestMismatch
+    }
+}
+
+public struct FirmwareDownloadResult: Sendable, Hashable {
+    public let url: URL
+    public let sha256: String
+    public let provenance: FirmwareDownloadProvenance
+}
+
+/// Downloads an IPSW into the library, resuming a previous attempt when possible. Rejects a
+/// catalog SHA-1 mismatch and explicitly reports when Apple supplied no checksum.
 public final class FirmwareDownloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<URL, Error>?
@@ -135,14 +164,17 @@ public final class FirmwareDownloader: NSObject, URLSessionDownloadDelegate, @un
     public static func resumeFile(for destination: URL) -> URL { destination.appendingPathExtension("resume") }
 
     /// Downloads `release` to `directory`/`release.fileName` and verifies it.
-    public func download(_ release: FirmwareRelease, to directory: URL, progress: @escaping @Sendable (_ written: Int64, _ total: Int64) -> Void) async throws -> URL {
+    public func download(_ release: FirmwareRelease, to directory: URL, progress: @escaping @Sendable (_ written: Int64, _ total: Int64) -> Void) async throws -> FirmwareDownloadResult {
         try SecureFileIO.createPrivateDirectory(at: directory)
         let destination = directory.appendingPathComponent(release.fileName)
         guard !FileManager.default.fileExists(atPath: destination.path) else {
             throw ToolkitError.invalidInput("\(release.fileName) is already in the library.")
         }
         let resumeFile = Self.resumeFile(for: destination)
-        let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 120
+        configuration.timeoutIntervalForResource = 86_400
+        let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
         let downloaded: URL = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -164,15 +196,22 @@ public final class FirmwareDownloader: NSObject, URLSessionDownloadDelegate, @un
             })
         }
         try? FileManager.default.removeItem(at: resumeFile)
-        if let expected = release.sha1 {
-            let actual = try IPSWLibrary.checksums(of: downloaded).sha1
-            guard actual == expected else {
-                try? FileManager.default.removeItem(at: downloaded)
-                throw ToolkitError(.fileSystem, message: "The downloaded firmware does not match Apple's checksum, so it was deleted.", recovery: "Download it again.", technicalDetail: "SHA-1 expected \(expected), got \(actual)")
+        return try Self.complete(staged: downloaded, release: release, destination: destination)
+    }
+
+    /// Finalizes the staged download only after hashing; used for downloads with and without a
+    /// catalog digest so the caller never has to infer verification from a successful transfer.
+    static func complete(staged: URL, release: FirmwareRelease, destination: URL) throws -> FirmwareDownloadResult {
+        let sums = try IPSWLibrary.checksums(of: staged)
+        let provenance = try FirmwareDownloadProvenance.assess(sha1: sums.sha1, catalogSHA1: release.sha1)
+        if provenance == .digestMismatch {
+            do { try FileManager.default.removeItem(at: staged) } catch {
+                throw ToolkitError(.fileSystem, message: "The firmware checksum did not match, and its staged file could not be deleted.", recovery: "Remove the staged file from the firmware library before downloading again.", technicalDetail: staged.path)
             }
+            throw ToolkitError(.fileSystem, message: "The downloaded firmware does not match Apple's catalog checksum, so it was deleted.", recovery: "Download it again.", technicalDetail: "SHA-1 expected \(release.sha1 ?? "unavailable"), got \(sums.sha1)")
         }
-        try FileManager.default.moveItem(at: downloaded, to: destination)
-        return destination
+        try FileManager.default.moveItem(at: staged, to: destination)
+        return FirmwareDownloadResult(url: destination, sha256: sums.sha256, provenance: provenance)
     }
 
     public func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {

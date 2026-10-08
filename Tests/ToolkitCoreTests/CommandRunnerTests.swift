@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 @testable import ToolkitCore
@@ -88,6 +89,83 @@ struct CommandRunnerTests {
             #expect(error.kind == .cancelled)
         }
         #expect(Date().timeIntervalSince(start) < 8)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func ownedCancellationWaitsForChildExitAndDrainsOutput() async throws {
+        let directory = try SecureFileIO.makeTemporaryDirectory(prefix: "owned-command")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let barrier = directory.appendingPathComponent("exit-barrier")
+        try #require(mkfifo(barrier.path, 0o600) == 0)
+        let descriptor = open(barrier.path, O_RDWR | O_NONBLOCK)
+        try #require(descriptor >= 0)
+        defer { close(descriptor) }
+        // The child acknowledges SIGTERM but waits for a test-controlled release before exit.
+        // A FIFO makes each assertion depend on a real process state rather than a delay.
+        let script = """
+        trap 'printf "cancel received\\n"; IFS= read -r release < "$1"; printf "after release\\n"; exit 0' TERM
+        printf 'ready:%s\\n' "$$"
+        IFS= read -r hold < "$1"
+        exit 1
+        """
+        let request = CommandRequest(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", script, "owned-command", barrier.path],
+                                     timeout: 10, displayName: "owned cancellation test", terminationGracePeriod: 3)
+        let cancellation = CommandCancellation()
+        let (lines, delivered) = AsyncStream<String>.makeStream()
+        let ended = LockedValue(false)
+        let task = Task<Void, Error> {
+            defer { ended.withLock { $0 = true }; delivered.finish() }
+            var buffered = ""
+            for try await event in runner.stream(request, cancellation: cancellation) {
+                if case .standardOutput(let data) = event {
+                    buffered.append(String(decoding: data, as: UTF8.self))
+                    while let newline = buffered.firstIndex(of: "\n") {
+                        delivered.yield(String(buffered[..<newline]))
+                        buffered.removeSubrange(...newline)
+                    }
+                }
+            }
+        }
+        defer {
+            cancellation.cancel()
+            let release = Data("release\n".utf8)
+            _ = release.withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) }
+        }
+        var iterator = lines.makeAsyncIterator()
+        let ready = try #require(await iterator.next())
+        let pid = try #require(Int32(ready.replacingOccurrences(of: "ready:", with: "")))
+        #expect(ready.hasPrefix("ready:") && pid > 0)
+        cancellation.cancel()
+        #expect(await iterator.next() == "cancel received")
+        #expect(!ended.current)
+        #expect(kill(pid, 0) == 0)
+        let release = Data("release\n".utf8)
+        let written = release.withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) }
+        #expect(written == release.count)
+        #expect(await iterator.next() == "after release")
+        do {
+            try await task.value
+            Issue.record("Expected cancellation after the child exited")
+        } catch let error as ToolkitError {
+            #expect(error.kind == .cancelled)
+        }
+        #expect(ended.current)
+        #expect(kill(pid, 0) == -1 && errno == ESRCH)
+    }
+
+    @Test func anOwnedCommandCancelledBeforeLaunchNeverStarts() async throws {
+        let directory = try SecureFileIO.makeTemporaryDirectory(prefix: "cancelled-command")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let marker = directory.appendingPathComponent("launched")
+        let request = CommandRequest(executable: URL(fileURLWithPath: "/usr/bin/touch"), arguments: [marker.path], timeout: 10)
+        let cancellation = CommandCancellation()
+        cancellation.cancel()
+        do {
+            for try await _ in runner.stream(request, cancellation: cancellation) {}
+            Issue.record("Expected refusal of a command cancelled before launch")
+        } catch let error as ToolkitError {
+            #expect(error.kind == .cancelled)
+        }
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
     }
 
     @Test func missingExecutableIsActionable() async throws {

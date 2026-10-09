@@ -101,7 +101,7 @@ struct ActionsView: View {
                 TextField("Search guided commands", text: $search)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("command-search")
-                Picker("Category", selection: Binding(get: { filter }, set: selectFilter)) {
+                Picker("Category", selection: Binding(get: { filter }, set: { selectFilter($0) })) {
                     Text("All categories").tag(GuidedCommandFilter.all)
                     ForEach(GuidedCommandCategory.allCases) { category in
                         Text(category.rawValue)
@@ -113,6 +113,8 @@ struct ActionsView: View {
                     }
                 }
                 .labelsHidden()
+                // Separate the control's identity from its menu items' identifiers.
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("command-categories")
                 List(selection: $model.selectedActionID) {
                     ForEach(GuidedCommandCategory.allCases.filter { category in actions.contains { category.contains($0) } }) { category in

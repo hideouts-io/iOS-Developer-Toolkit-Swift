@@ -19,7 +19,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Select Xcode
         run: scripts/ci-select-xcode.sh
       - name: Test before packaging
@@ -27,14 +27,14 @@ jobs:
       - name: Install the firmware helpers' build tools
         run: brew install autoconf automake libtool pkg-config cmake
       - name: Reuse the firmware helpers built from the same pinned sources
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: build-output/restore-helpers
           key: restore-helpers-${{ hashFiles('scripts/build-restore-helpers.sh') }}-${{ env.XCODE_VERSION }}
       - name: Build, sign, and verify the release
         # Fails unless the tag (without "v") matches ToolkitVersion.current and MARKETING_VERSION.
         run: scripts/build-release.sh "${GITHUB_REF_NAME#v}" release-assets
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-assets
           path: release-assets/*
@@ -42,6 +42,7 @@ jobs:
 
   publish:
     name: Attest and publish
+    environment: github-release
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -50,7 +51,7 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: release-assets
           path: release-assets
@@ -67,11 +68,11 @@ jobs:
           echo "zip=$zip" >> "$GITHUB_OUTPUT"
           echo "sbom=$sbom" >> "$GITHUB_OUTPUT"
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v4.2.2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ steps.files.outputs.zip }}
       - name: Attest SBOM
-        uses: actions/attest@v4.2.2
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: ${{ steps.files.outputs.zip }}
           sbom-path: ${{ steps.files.outputs.sbom }}

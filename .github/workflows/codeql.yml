@@ -39,11 +39,11 @@ jobs:
           build-mode: manual
       - name: Build the package and the app
         run: |
-          swift build --arch arm64
+          swift build --arch x86_64
           xcodebuild -project iOSDeveloperToolkit.xcodeproj -scheme iOSDeveloperToolkit \
-            -configuration Debug -destination 'platform=macOS,arch=arm64' \
+            -configuration Debug -destination 'platform=macOS,arch=x86_64' \
             -derivedDataPath "$RUNNER_TEMP/dd" \
-            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES SWIFT_ENABLE_EXPLICIT_MODULES=NO build
+            ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES SWIFT_ENABLE_EXPLICIT_MODULES=NO build
       - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
         with:
           upload: never

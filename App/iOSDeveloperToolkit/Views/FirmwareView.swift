@@ -22,6 +22,7 @@ struct FirmwareView: View {
         WorkspacePage(workspace: .firmware) {
             if let problem = firmware.helperProblem {
                 Label(problem, systemImage: "exclamationmark.triangle")
+                    .accessibilityIdentifier("firmware.helper-problem")
                     .font(.callout)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)

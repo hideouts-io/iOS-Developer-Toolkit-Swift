@@ -21,18 +21,87 @@ packages:
   Toolkit:
     path: .
 targets:
+  FirmwareHelpers:
+    type: tool
+    platform: macOS
+    legacy:
+      toolPath: /bin/bash
+      arguments: '"$(SRCROOT)/scripts/build-restore-helpers.sh"'
+      passSettings: true
+      workingDirectory: $(SRCROOT)
   iOSDeveloperToolkit:
     type: application
     platform: macOS
     sources:
       - path: App/iOSDeveloperToolkit
     dependencies:
+      - target: FirmwareHelpers
+        link: false
+        embed: false
       - package: Toolkit
         product: ToolkitCore
       - package: Toolkit
         product: DeviceKit
       - package: Toolkit
         product: ToolkitFeatures
+    postBuildScripts:
+      - script: '"$SRCROOT/scripts/embed-restore-helpers.sh"'
+        name: Embed Firmware Helpers
+        shell: /bin/bash
+        showEnvVars: false
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - $(SRCROOT)/scripts/embed-restore-helpers.sh
+          - $(SRCROOT)/build-output/restore-helpers/out/bin/idevicerestore
+          - $(SRCROOT)/build-output/restore-helpers/out/bin/irecovery
+          - $(SRCROOT)/build-output/restore-helpers/out/SOURCES.txt
+          - $(SRCROOT)/build-output/restore-helpers/out/licenses/idevicerestore/AUTHORS
+          - $(SRCROOT)/build-output/restore-helpers/out/licenses/idevicerestore/COPYING
+          - $(SRCROOT)/build-output/restore-helpers/out/licenses/libimobiledevice-glue/COPYING
+          - $(SRCROOT)/build-output/restore-helpers/out/licenses/libimobiledevice/AUTHORS
+          - $(SRCROOT)/build-output/restore-helpers/out/licenses/libimobiledevice/COPYING
+          - $(SRCROOT)/build-output/restore-helpers/out/licenses/libimobiledevice/COPYING.LESSER
+          - $(SRCROOT)/build-output/restore-helpers/out/licenses/libirecovery/COPYING
+          - $(SRCROOT)/build-output/restore-helpers/out/licenses/libplist/AUTHORS
+          - $(SRCROOT)/build-output/restore-helpers/out/licenses/libplist/COPYING
+          - $(SRCROOT)/build-output/restore-helpers/out/licenses/libplist/COPYING.LESSER
+          - $(SRCROOT)/build-output/restore-helpers/out/licenses/libtatsu/COPYING
+          - $(SRCROOT)/build-output/restore-helpers/out/licenses/libusbmuxd/AUTHORS
+          - $(SRCROOT)/build-output/restore-helpers/out/licenses/libusbmuxd/COPYING
+          - $(SRCROOT)/build-output/restore-helpers/out/licenses/libzip/AUTHORS
+          - $(SRCROOT)/build-output/restore-helpers/out/licenses/libzip/LICENSE
+          - $(SRCROOT)/build-output/restore-helpers/out/licenses/openssl/LICENSE.txt
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Helpers
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Helpers/idevicerestore
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Helpers/irecovery
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/SOURCES.txt
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/idevicerestore
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libimobiledevice
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libimobiledevice-glue
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libirecovery
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libplist
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libtatsu
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libusbmuxd
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libzip
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/openssl
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/idevicerestore/AUTHORS
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/idevicerestore/COPYING
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libimobiledevice-glue/COPYING
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libimobiledevice/AUTHORS
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libimobiledevice/COPYING
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libimobiledevice/COPYING.LESSER
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libirecovery/COPYING
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libplist/AUTHORS
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libplist/COPYING
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libplist/COPYING.LESSER
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libtatsu/COPYING
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libusbmuxd/AUTHORS
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libusbmuxd/COPYING
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libzip/AUTHORS
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libzip/LICENSE
+          - $(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/openssl/LICENSE.txt
     settings:
       base:
         PRODUCT_NAME: "iOS Developer Toolkit (Swift)"

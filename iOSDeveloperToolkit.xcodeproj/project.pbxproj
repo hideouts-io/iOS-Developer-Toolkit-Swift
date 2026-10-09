@@ -39,6 +39,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		513BA446F86D4DC4FF41E600 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 8F9521A1C32BAC67A0066494 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 32D9773338414C6CCAE8E3EB;
+			remoteInfo = FirmwareHelpers;
+		};
 		7D859C2B12ECAB79034F33D7 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 8F9521A1C32BAC67A0066494 /* Project object */;
@@ -59,7 +66,6 @@
 		599C314C6B21A9A615B04C7A /* iOSDeveloperToolkit.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = iOSDeveloperToolkit.entitlements; sourceTree = "<group>"; };
 		5FC5D72518E6E2101A0B339B /* iOSDeveloperToolkitApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOSDeveloperToolkitApp.swift; sourceTree = "<group>"; };
 		64CADCDAC59205AFA532EF87 /* ActionsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionsViews.swift; sourceTree = "<group>"; };
-		6BF9453E787F70E21D026A1B /* security-review-candidate */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "security-review-candidate"; path = .; sourceTree = SOURCE_ROOT; };
 		791078D9EF3EC6308839270F /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		7F724AF45C9EBAFFC75A5710 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		8C6560689EC51FF96E5F71E7 /* iOSDeveloperToolkit.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iOSDeveloperToolkit.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -69,6 +75,7 @@
 		B26E835D20074A0489176A15 /* ReconnectGuideView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReconnectGuideView.swift; sourceTree = "<group>"; };
 		B37EBEC3A6576895CA18665A /* DataViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataViews.swift; sourceTree = "<group>"; };
 		B81EECBCB7D517436001EFF8 /* LogViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogViews.swift; sourceTree = "<group>"; };
+		BF28B9563BB119B8B18C547A /* IOSDeveloperToolkit-Swift */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "IOSDeveloperToolkit-Swift"; path = .; sourceTree = SOURCE_ROOT; };
 		C28F7F2B73F9F0983878D44D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C6641462093807C7726C77E6 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		CD1BCA4BFD074C07318C65CC /* LiveLogsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveLogsModel.swift; sourceTree = "<group>"; };
@@ -183,7 +190,7 @@
 		9F007AA80ECE5A10D372536D /* Packages */ = {
 			isa = PBXGroup;
 			children = (
-				6BF9453E787F70E21D026A1B /* security-review-candidate */,
+				BF28B9563BB119B8B18C547A /* IOSDeveloperToolkit-Swift */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -198,6 +205,26 @@
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
+
+/* Begin PBXLegacyTarget section */
+		32D9773338414C6CCAE8E3EB /* FirmwareHelpers */ = {
+			isa = PBXLegacyTarget;
+			buildArgumentsString = "\"$(SRCROOT)/scripts/build-restore-helpers.sh\"";
+			buildConfigurationList = 0B6AB51D049446E3B83F0923 /* Build configuration list for PBXLegacyTarget "FirmwareHelpers" */;
+			buildPhases = (
+				A3D3DE802B2DBA3CABBBA244 /* Sources */,
+			);
+			buildToolPath = /bin/bash;
+			buildWorkingDirectory = "$(SRCROOT)";
+			dependencies = (
+			);
+			name = FirmwareHelpers;
+			packageProductDependencies = (
+			);
+			passBuildSettingsInEnvironment = 1;
+			productName = FirmwareHelpers;
+		};
+/* End PBXLegacyTarget section */
 
 /* Begin PBXNativeTarget section */
 		C94E9FC9726C7F28D33DAAA6 /* iOSDeveloperToolkitUITests */ = {
@@ -225,10 +252,12 @@
 				488940A04D4B7D5484BF1BF5 /* Sources */,
 				B142682F4800FD134D687DD7 /* Resources */,
 				31B9C83311C44A75CE1F24EC /* Frameworks */,
+				50E45B1F44A134488677AB2E /* Embed Firmware Helpers */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				C445AAFBA3D83548EAF34E82 /* PBXTargetDependency */,
 			);
 			name = iOSDeveloperToolkit;
 			packageProductDependencies = (
@@ -277,6 +306,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				32D9773338414C6CCAE8E3EB /* FirmwareHelpers */,
 				FE597393124482775C8D00A3 /* iOSDeveloperToolkit */,
 				C94E9FC9726C7F28D33DAAA6 /* iOSDeveloperToolkitUITests */,
 			);
@@ -293,6 +323,79 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		50E45B1F44A134488677AB2E /* Embed Firmware Helpers */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/scripts/embed-restore-helpers.sh",
+				"$(SRCROOT)/build-output/restore-helpers/out/bin/idevicerestore",
+				"$(SRCROOT)/build-output/restore-helpers/out/bin/irecovery",
+				"$(SRCROOT)/build-output/restore-helpers/out/SOURCES.txt",
+				"$(SRCROOT)/build-output/restore-helpers/out/licenses/idevicerestore/AUTHORS",
+				"$(SRCROOT)/build-output/restore-helpers/out/licenses/idevicerestore/COPYING",
+				"$(SRCROOT)/build-output/restore-helpers/out/licenses/libimobiledevice-glue/COPYING",
+				"$(SRCROOT)/build-output/restore-helpers/out/licenses/libimobiledevice/AUTHORS",
+				"$(SRCROOT)/build-output/restore-helpers/out/licenses/libimobiledevice/COPYING",
+				"$(SRCROOT)/build-output/restore-helpers/out/licenses/libimobiledevice/COPYING.LESSER",
+				"$(SRCROOT)/build-output/restore-helpers/out/licenses/libirecovery/COPYING",
+				"$(SRCROOT)/build-output/restore-helpers/out/licenses/libplist/AUTHORS",
+				"$(SRCROOT)/build-output/restore-helpers/out/licenses/libplist/COPYING",
+				"$(SRCROOT)/build-output/restore-helpers/out/licenses/libplist/COPYING.LESSER",
+				"$(SRCROOT)/build-output/restore-helpers/out/licenses/libtatsu/COPYING",
+				"$(SRCROOT)/build-output/restore-helpers/out/licenses/libusbmuxd/AUTHORS",
+				"$(SRCROOT)/build-output/restore-helpers/out/licenses/libusbmuxd/COPYING",
+				"$(SRCROOT)/build-output/restore-helpers/out/licenses/libzip/AUTHORS",
+				"$(SRCROOT)/build-output/restore-helpers/out/licenses/libzip/LICENSE",
+				"$(SRCROOT)/build-output/restore-helpers/out/licenses/openssl/LICENSE.txt",
+			);
+			name = "Embed Firmware Helpers";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Helpers",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Helpers/idevicerestore",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Helpers/irecovery",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/SOURCES.txt",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/idevicerestore",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libimobiledevice",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libimobiledevice-glue",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libirecovery",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libplist",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libtatsu",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libusbmuxd",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libzip",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/openssl",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/idevicerestore/AUTHORS",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/idevicerestore/COPYING",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libimobiledevice-glue/COPYING",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libimobiledevice/AUTHORS",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libimobiledevice/COPYING",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libimobiledevice/COPYING.LESSER",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libirecovery/COPYING",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libplist/AUTHORS",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libplist/COPYING",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libplist/COPYING.LESSER",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libtatsu/COPYING",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libusbmuxd/AUTHORS",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libusbmuxd/COPYING",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libzip/AUTHORS",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/libzip/LICENSE",
+				"$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)/Contents/Resources/Licenses/restore-helpers/openssl/LICENSE.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "\"$SRCROOT/scripts/embed-restore-helpers.sh\"";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		488940A04D4B7D5484BF1BF5 /* Sources */ = {
@@ -334,6 +437,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A3D3DE802B2DBA3CABBBA244 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -341,6 +451,11 @@
 			isa = PBXTargetDependency;
 			target = FE597393124482775C8D00A3 /* iOSDeveloperToolkit */;
 			targetProxy = 7D859C2B12ECAB79034F33D7 /* PBXContainerItemProxy */;
+		};
+		C445AAFBA3D83548EAF34E82 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 32D9773338414C6CCAE8E3EB /* FirmwareHelpers */;
+			targetProxy = 513BA446F86D4DC4FF41E600 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -392,6 +507,19 @@
 			};
 			name = Release;
 		};
+		4491CC91B5B2673366D99C10 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.hideouts.FirmwareHelpers;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
 		4D0BEA2325533C972D0ED3C4 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -417,6 +545,19 @@
 				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
 			};
 			name = Debug;
+		};
+		6321CC0914E0448A350E60EE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.hideouts.FirmwareHelpers;
+				SDKROOT = macosx;
+			};
+			name = Release;
 		};
 		9E7571E39A44000D901788E0 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -569,6 +710,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		0B6AB51D049446E3B83F0923 /* Build configuration list for PBXLegacyTarget "FirmwareHelpers" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4491CC91B5B2673366D99C10 /* Debug */,
+				6321CC0914E0448A350E60EE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		6B061FE82399C983728CD096 /* Build configuration list for PBXProject "iOSDeveloperToolkit" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

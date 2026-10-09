@@ -113,6 +113,8 @@ struct ActionsView: View {
                     }
                 }
                 .labelsHidden()
+                // Separate the control's identity from its menu items' identifiers.
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("command-categories")
                 List(selection: $model.selectedActionID) {
                     ForEach(GuidedCommandCategory.allCases.filter { category in actions.contains { category.contains($0) } }) { category in

@@ -39,8 +39,11 @@ final class SmokeUITests: XCTestCase {
                 XCTFail("Missing workspace sidebar")
                 return
             }
-            guard sidebar.isHittable else {
-                XCTFail("The app sidebar is obscured. Make the test app window visible before running native UI tests.")
+            // Native outline containers can report unhittable while their controls are
+            // reachable. Check a visible sidebar button before scrolling, then the target row.
+            guard app.buttons["action-palette"].isHittable else {
+                attachScreenshot("unreachable-sidebar-\(identifier)")
+                XCTFail("The sidebar Action Palette button is not reachable. Make the test app window visible before running native UI tests.")
                 return
             }
             for _ in 0..<8 {

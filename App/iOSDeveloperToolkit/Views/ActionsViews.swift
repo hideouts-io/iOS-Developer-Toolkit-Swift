@@ -101,7 +101,7 @@ struct ActionsView: View {
                 TextField("Search guided commands", text: $search)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("command-search")
-                Picker("Category", selection: Binding(get: { filter }, set: selectFilter)) {
+                Picker("Category", selection: Binding(get: { filter }, set: { selectFilter($0) })) {
                     Text("All categories").tag(GuidedCommandFilter.all)
                     ForEach(GuidedCommandCategory.allCases) { category in
                         Text(category.rawValue)

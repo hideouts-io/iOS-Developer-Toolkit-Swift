@@ -17,6 +17,10 @@ permissions:
 env:
   XCODE_VERSION: ${{ vars.XCODE_VERSION }}
 
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   analyze:
     name: Analyze Swift
@@ -120,3 +124,21 @@ jobs:
           sarif_file: sarif
           category: /language:actions
           wait-for-processing: true
+
+  upload-gate:
+    name: Code scanning uploads
+    needs: [upload-analyze, upload-analyze-actions]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require every analysis upload to succeed
+        env:
+          SWIFT_UPLOAD_RESULT: ${{ needs.upload-analyze.result }}
+          ACTIONS_UPLOAD_RESULT: ${{ needs.upload-analyze-actions.result }}
+        run: |
+          if [[ "$SWIFT_UPLOAD_RESULT" != "success" ]] || [[ "$ACTIONS_UPLOAD_RESULT" != "success" ]]; then
+            printf 'Code scanning upload failed or was skipped: swift=%s; actions=%s\n' "$SWIFT_UPLOAD_RESULT" "$ACTIONS_UPLOAD_RESULT" >&2
+            exit 1
+          fi

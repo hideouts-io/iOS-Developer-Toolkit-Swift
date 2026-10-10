@@ -372,15 +372,16 @@ xcodebuild -project iOSDeveloperToolkit.xcodeproj -scheme iOSDeveloperToolkit \
 scripts/build-release.sh                      # universal, ad-hoc-signed release ZIP, SBOM, checksums in build-output/release/
 ```
 
-The release includes the firmware helpers, which `scripts/build-release.sh` builds with
-`scripts/build-restore-helpers.sh` from pinned sources. That needs
-`brew install autoconf automake libtool pkg-config cmake`. To try the Firmware page from a
-development build, build the helpers once and point the app at them:
+Xcode Debug and Release builds include the firmware helpers. The `FirmwareHelpers` target
+builds `idevicerestore` and `irecovery` from pinned sources, and the app target embeds them,
+their licenses, and the source manifest. The first build needs the Homebrew build tools:
 
 ```bash
-scripts/build-restore-helpers.sh
-open --env IDT_RESTORE_HELPERS="$PWD/build-output/restore-helpers/out/bin" "iOS Developer Toolkit (Swift).app"
+brew install autoconf automake libtool pkg-config cmake
 ```
+
+Later builds reuse the helpers while the build script and source pins are unchanged.
+`scripts/build-restore-helpers.sh` also builds them independently for command-line tests.
 
 The app icon and logo come from one image, `docs/brand/logo-source.png`:
 `xcrun swift scripts/generate-icons.swift` writes the app icon at every size, the in-app logo, and

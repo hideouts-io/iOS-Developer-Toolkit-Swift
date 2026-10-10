@@ -10,6 +10,7 @@ final class SmokeUITests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launchArguments = ["-ui-testing", "YES", "-demo-mode", "YES", "-ApplePersistenceIgnoreState", "YES"]
+        app.launchEnvironment["IDT_RESTORE_HELPERS"] = ""
         app.launch()
         app.activate()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5), "The test app must be in the foreground before native UI interaction")
@@ -36,6 +37,13 @@ final class SmokeUITests: XCTestCase {
             let sidebar = app.descendants(matching: .any)["workspace-sidebar"]
             guard sidebar.waitForExistence(timeout: 5) else {
                 XCTFail("Missing workspace sidebar")
+                return
+            }
+            // Native outline containers can report unhittable while their controls are
+            // reachable. Check a visible sidebar button before scrolling, then the target row.
+            guard app.buttons["action-palette"].isHittable else {
+                attachScreenshot("unreachable-sidebar-\(identifier)")
+                XCTFail("The sidebar Action Palette button is not reachable. Make the test app window visible before running native UI tests.")
                 return
             }
             for _ in 0..<8 {
@@ -96,6 +104,23 @@ final class SmokeUITests: XCTestCase {
 
     func testDemoModeIsClearlyLabelled() throws {
         XCTAssertTrue(app.descendants(matching: .any)["demo-banner"].waitForExistence(timeout: 10))
+    }
+
+    func testFirmwareToolsAreBundled() throws {
+        // The native UI test runner and app are sibling products in this build directory.
+        let appBundle = Bundle.main.bundleURL.deletingLastPathComponent()
+            .appendingPathComponent("iOS Developer Toolkit (Swift).app", isDirectory: true)
+        let helpers = appBundle.appendingPathComponent("Contents/Helpers", isDirectory: true)
+        for name in ["idevicerestore", "irecovery"] {
+            let helper = helpers.appendingPathComponent(name)
+            XCTAssertTrue(FileManager.default.isExecutableFile(atPath: helper.path), "Missing executable firmware helper: \(helper.path)")
+        }
+        let licenses = appBundle.appendingPathComponent("Contents/Resources/Licenses/restore-helpers", isDirectory: true)
+        for relativePath in ["SOURCES.txt", "idevicerestore/COPYING", "libirecovery/COPYING"] {
+            XCTAssertTrue(FileManager.default.isReadableFile(atPath: licenses.appendingPathComponent(relativePath).path), "Missing firmware license or source manifest: \(relativePath)")
+        }
+        openWorkspace("firmware")
+        XCTAssertFalse(app.descendants(matching: .any)["firmware.helper-problem"].exists, "The Firmware page must locate its bundled tools without an environment override")
     }
 
     func testEveryWorkspaceOpens() throws {
@@ -274,9 +299,7 @@ final class SmokeUITests: XCTestCase {
     }
 
     func testFirmwareRequiresValidationAndBlocksDemoInstall() throws {
-        let sidebar = app.descendants(matching: .any)["sidebar-firmware"]
-        XCTAssertTrue(sidebar.waitForExistence(timeout: 5))
-        sidebar.click()
+        openWorkspace("firmware")
         let install = app.buttons["firmware.install"]
         XCTAssertTrue(install.waitForExistence(timeout: 5))
         XCTAssertFalse(install.isEnabled, "A demo device cannot supply a validated install plan")

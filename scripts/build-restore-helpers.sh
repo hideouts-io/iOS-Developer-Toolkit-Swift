@@ -30,6 +30,31 @@ OUT="${1:-$WORK/out}"
 SRC="$WORK/src"
 MIN_MACOS=14.0
 JOBS="$(sysctl -n hw.ncpu)"
+STAMP="$(shasum -a 256 "$ROOT/scripts/build-restore-helpers.sh" | cut -d' ' -f1)"
+STATE="$WORK/cache-$STAMP"
+
+for homebrew_bin in /opt/homebrew/bin /usr/local/bin; do
+  if [[ -d "$homebrew_bin" ]]; then PATH="$homebrew_bin:$PATH"; fi
+done
+export PATH
+
+mkdir -p "$WORK"
+LOCK="$WORK/.build-lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  [[ -d "$LOCK" ]] || fail "cannot create build lock $LOCK"
+  owner="unknown"
+  if [[ -f "$LOCK/pid" ]]; then read -r owner < "$LOCK/pid"; fi
+  fail "another helper build owns $LOCK (PID $owner). Check that process before removing a stale lock."
+fi
+printf '%s\n' "$$" > "$LOCK/pid"
+trap 'rm -f "$LOCK/pid"; rmdir "$LOCK"' EXIT
+
+if [[ -f "$OUT/STAMP" && "$(cat "$OUT/STAMP")" == "$STAMP" \
+  && -x "$OUT/bin/idevicerestore" && -x "$OUT/bin/irecovery" \
+  && -f "$OUT/SOURCES.txt" && -d "$OUT/licenses" ]]; then
+  step "Reusing firmware helpers: $OUT"
+  exit 0
+fi
 
 # name|git URL|commit|version label
 GIT_SOURCES=(
@@ -46,10 +71,36 @@ OPENSSL_VERSION=3.5.8
 OPENSSL_URL="https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/openssl-$OPENSSL_VERSION.tar.gz"
 OPENSSL_SHA256=a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2
 
-for tool in autoconf automake glibtoolize pkg-config cmake git xcrun lipo; do
+for tool in autoconf autom4te automake glibtoolize pkg-config cmake git xcrun lipo; do
   command -v "$tool" >/dev/null || fail "$tool is missing (brew install autoconf automake libtool pkg-config cmake)"
 done
 SDK="$(xcrun --sdk macosx --show-sdk-path)"
+
+# Autoconf 2.73's Perl exec handoff stalls on this macOS host. A local copy uses
+# a child process and preserves its exit status; installed tools and source pins are unchanged.
+if [[ "$(autoconf --version | head -1)" == "autoconf (GNU Autoconf) 2.73" ]]; then
+  step "Preparing the build-local Autoconf 2.73 process-launch compatibility patch"
+  mkdir -p "$STATE/tools"
+  /usr/bin/perl -0777 -e '
+    my $source = <>;
+    my $original = q{exec {$autom4te_command[0]} @autom4te_command;};
+    my $replacement = q{my $status = system {$autom4te_command[0]} @autom4te_command;
+exit ($status == -1 ? 127 : $status & 127 ? 128 + ($status & 127) : $status >> 8);};
+    my $count = $source =~ s/\Q$original\E/$replacement/g;
+    die "Unsupported Autoconf 2.73 launch contract\n" unless $count == 1;
+    print $source;
+  ' "$(command -v autoconf)" > "$STATE/tools/autoconf.pl"
+  cat > "$STATE/tools/autoconf" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+/usr/bin/perl "$(dirname "$0")/autoconf.pl" "$@"
+EOF
+  chmod +x "$STATE/tools/autoconf"
+  printf -v AUTOCONF '%q' "$STATE/tools/autoconf"
+  export AUTOCONF
+  PATH="$STATE/tools:$PATH"
+  export PATH
+fi
 
 fetch_sources() {
   mkdir -p "$SRC"
@@ -77,7 +128,7 @@ fetch_sources() {
 # autotools project: name, extra configure flags…
 build_autotools() {
   local arch="$1" name="$2"; shift 2
-  local prefix="$WORK/prefix-$arch" build="$WORK/build-$arch/$name"
+  local prefix="$STATE/prefix-$arch" build="$STATE/build-$arch/$name"
   [[ -f "$build/.done" ]] && return 0
   step "[$arch] $name"
   rm -rf "$build"; mkdir -p "$build"
@@ -98,7 +149,7 @@ build_autotools() {
 }
 
 build_openssl() {
-  local arch="$1" prefix="$WORK/prefix-$arch" build="$WORK/build-$arch/openssl"
+  local arch="$1" prefix="$STATE/prefix-$arch" build="$STATE/build-$arch/openssl"
   [[ -f "$build/.done" ]] && return 0
   step "[$arch] OpenSSL $OPENSSL_VERSION"
   rm -rf "$build"; mkdir -p "$build"
@@ -114,7 +165,7 @@ build_openssl() {
 }
 
 build_libzip() {
-  local arch="$1" prefix="$WORK/prefix-$arch" build="$WORK/build-$arch/libzip"
+  local arch="$1" prefix="$STATE/prefix-$arch" build="$STATE/build-$arch/libzip"
   [[ -f "$build/.done" ]] && return 0
   step "[$arch] libzip"
   rm -rf "$build"; mkdir -p "$build"
@@ -131,7 +182,7 @@ build_libzip() {
 
 # pkg-config files for the libraries macOS provides (curl and zlib from the SDK).
 system_pkgconfig() {
-  local prefix="$WORK/prefix-$1"
+  local prefix="$STATE/prefix-$1"
   mkdir -p "$prefix/lib/pkgconfig"
   cat > "$prefix/lib/pkgconfig/libcurl.pc" <<EOF
 Name: libcurl
@@ -169,7 +220,7 @@ for arch in arm64 x86_64; do build_arch "$arch"; done
 step "Combining architectures"
 rm -rf "$OUT"; mkdir -p "$OUT/bin" "$OUT/licenses"
 for tool in idevicerestore irecovery; do
-  lipo -create "$WORK/prefix-arm64/bin/$tool" "$WORK/prefix-x86_64/bin/$tool" -output "$OUT/bin/$tool"
+  lipo -create "$STATE/prefix-arm64/bin/$tool" "$STATE/prefix-x86_64/bin/$tool" -output "$OUT/bin/$tool"
   archs="$(lipo -archs "$OUT/bin/$tool")"
   [[ " $archs " == *" arm64 "* && " $archs " == *" x86_64 "* ]] || fail "$tool is not universal ($archs)"
   # Only macOS system libraries may remain dynamic.
@@ -191,7 +242,7 @@ done
 mkdir -p "$OUT/licenses/openssl"
 tar -xzf "$SRC/openssl-$OPENSSL_VERSION.tar.gz" -C "$OUT/licenses/openssl" --strip-components 1 "openssl-$OPENSSL_VERSION/LICENSE.txt"
 echo "openssl $OPENSSL_VERSION $OPENSSL_URL sha256 $OPENSSL_SHA256" >> "$OUT/SOURCES.txt"
-shasum -a 256 "$ROOT/scripts/build-restore-helpers.sh" | cut -d' ' -f1 > "$OUT/STAMP"
+printf '%s\n' "$STAMP" > "$OUT/STAMP"
 
 step "Done: $OUT"
 ls -l "$OUT/bin"

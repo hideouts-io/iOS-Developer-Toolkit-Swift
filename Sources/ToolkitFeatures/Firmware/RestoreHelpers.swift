@@ -20,7 +20,7 @@ public enum RestoreHelper: String, CaseIterable, Sendable {
         for candidate in candidates where FileManager.default.isExecutableFile(atPath: candidate.path) {
             return candidate
         }
-        throw ToolkitError(.toolMissing, message: "The firmware tools are not included in this build.", recovery: "Use a release build of the app, or run scripts/build-restore-helpers.sh and set IDT_RESTORE_HELPERS to its bin folder.", technicalDetail: "Checked: " + candidates.map(\.path).joined(separator: ", "))
+        throw ToolkitError(.toolMissing, message: "The firmware tools are not included in this build.", recovery: "Build the app with Xcode to embed the firmware tools, or run scripts/build-restore-helpers.sh and set IDT_RESTORE_HELPERS to its bin folder.", technicalDetail: "Checked: " + candidates.map(\.path).joined(separator: ", "))
     }
 }
 

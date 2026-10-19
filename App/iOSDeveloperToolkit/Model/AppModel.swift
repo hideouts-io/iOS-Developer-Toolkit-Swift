@@ -104,7 +104,10 @@ final class AppModel {
     /// The Advanced Mode command line (kept between openings; Tool Reference can fill it in).
     var advancedModeText = "device info details"
     var isRefreshing = false
-    var statusMessage: String?
+    private(set) var statusMessageID = UUID()
+    var statusMessage: String? {
+        didSet { statusMessageID = UUID() }
+    }
 
     // Feature models
     let developerImage: DeveloperImageModel
@@ -150,6 +153,18 @@ final class AppModel {
         if let destination = arguments.firstIndex(of: "-workspace").flatMap({ arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil }).flatMap(Workspace.init(rawValue:)) {
             workspace = destination
         }
+    }
+
+    /// A delayed or queued dismissal can clear only the message that created it.
+    func dismissStatusMessage(id: UUID) {
+        guard statusMessageID == id else { return }
+        statusMessage = nil
+    }
+
+    func expireStatusMessage(id: UUID, after delay: Duration) async throws {
+        try await Task.sleep(for: delay)
+        try Task.checkCancellation()
+        dismissStatusMessage(id: id)
     }
 
     // MARK: Lifecycle

@@ -5,6 +5,7 @@ import ToolkitFeatures
 
 struct ContentView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var columnVisibility = NavigationSplitViewVisibility.all
 
     var body: some View {
@@ -45,12 +46,17 @@ struct ContentView: View {
         }
         .overlay(alignment: .bottom) {
             if let message = model.statusMessage {
-                StatusToast(message: message) { model.statusMessage = nil }
+                let messageID = model.statusMessageID
+                StatusToast(message: message, messageID: messageID) {
+                    model.dismissStatusMessage(id: messageID)
+                }
+                    .padding(.horizontal, 16)
                     .padding(.bottom, 16)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .id(messageID)
+                    .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: model.statusMessage)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: model.statusMessageID)
     }
 }
 
@@ -223,40 +229,62 @@ struct MainToolbar: ToolbarContent {
         ToolbarItem(placement: .navigation) {
             TargetPicker()
         }
-        ToolbarItemGroup(placement: .primaryAction) {
-            if !model.operations.isEmpty {
-                OperationsButton()
-            }
-            Button {
-                Task { await model.refreshDevices() }
-            } label: {
-                Label("Refresh Devices", systemImage: "arrow.clockwise")
-            }
-            .help("Look for devices again (⌘R)")
-            .disabled(model.isRefreshing)
-            .accessibilityIdentifier("retry-scan")
-            Button {
-                model.isCommandPalettePresented = true
-            } label: {
-                Label("Action Palette", systemImage: "command")
-            }
-            .help("Search every workspace and action (⌘K)")
-            .accessibilityIdentifier("toolbar-action-palette")
-            Menu {
-                Button("Reconnect & Retry…") { model.isReconnectGuidePresented = true }
-                    .accessibilityIdentifier("reconnect-guide")
-                Toggle("Demo Mode", isOn: Binding(get: { model.demoMode }, set: { model.demoMode = $0 }))
-                    .accessibilityIdentifier("demo-mode-toggle")
-                Divider()
-                Button("Keyboard Shortcuts") { model.isShortcutReferencePresented = true }
-                    .accessibilityIdentifier("keyboard-help")
-                Button("Create Support Bundle…") { SupportBundleExporter.export(model: model) }
-                    .accessibilityIdentifier("create-support-bundle")
-            } label: {
-                Label("Workspace Controls", systemImage: "ellipsis.circle")
-            }
-            .accessibilityIdentifier("workspace-controls")
+        #if compiler(>=6.2)
+        if #available(macOS 26, *) {
+            ToolbarItemGroup(placement: .primaryAction) { deviceActions }
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+            ToolbarItemGroup(placement: .primaryAction) { workspaceActions }
+        } else {
+            legacyActions
         }
+        #else
+        legacyActions
+        #endif
+    }
+
+    private var legacyActions: some ToolbarContent {
+        ToolbarItemGroup(placement: .primaryAction) {
+            deviceActions
+            workspaceActions
+        }
+    }
+
+    @ViewBuilder private var deviceActions: some View {
+        if !model.operations.isEmpty {
+            OperationsButton()
+        }
+        Button {
+            Task { await model.refreshDevices() }
+        } label: {
+            Label("Refresh Devices", systemImage: "arrow.clockwise")
+        }
+        .help("Look for devices again (⌘R)")
+        .disabled(model.isRefreshing)
+        .accessibilityIdentifier("retry-scan")
+    }
+
+    @ViewBuilder private var workspaceActions: some View {
+        Button {
+            model.isCommandPalettePresented = true
+        } label: {
+            Label("Action Palette", systemImage: "command")
+        }
+        .help("Search every workspace and action (⌘K)")
+        .accessibilityIdentifier("toolbar-action-palette")
+        Menu {
+            Button("Reconnect & Retry…") { model.isReconnectGuidePresented = true }
+                .accessibilityIdentifier("reconnect-guide")
+            Toggle("Demo Mode", isOn: Binding(get: { model.demoMode }, set: { model.demoMode = $0 }))
+                .accessibilityIdentifier("demo-mode-toggle")
+            Divider()
+            Button("Keyboard Shortcuts") { model.isShortcutReferencePresented = true }
+                .accessibilityIdentifier("keyboard-help")
+            Button("Create Support Bundle…") { SupportBundleExporter.export(model: model) }
+                .accessibilityIdentifier("create-support-bundle")
+        } label: {
+            Label("Workspace Controls", systemImage: "ellipsis.circle")
+        }
+        .accessibilityIdentifier("workspace-controls")
     }
 }
 
@@ -393,25 +421,71 @@ struct DemoBanner: View {
 }
 
 struct StatusToast: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
     let message: String
+    let messageID: UUID
     let dismiss: () -> Void
 
     var body: some View {
+        surface
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("status-toast")
+            .task(id: messageID) {
+                do {
+                    try await model.expireStatusMessage(id: messageID, after: .seconds(6))
+                } catch is CancellationError {
+                    return
+                } catch {
+                    model.present(error)
+                }
+            }
+    }
+
+    @ViewBuilder private var surface: some View {
+        if reduceTransparency {
+            toastContent
+                .background(Color(nsColor: .windowBackgroundColor), in: Capsule())
+                .overlay(Capsule().strokeBorder(Color(nsColor: .separatorColor), lineWidth: contrast == .increased ? 2 : 1))
+        } else {
+            #if compiler(>=6.2)
+            if #available(macOS 26, *) {
+                toastContent.glassEffect(.regular, in: Capsule())
+            } else {
+                materialSurface
+            }
+            #else
+            materialSurface
+            #endif
+        }
+    }
+
+    private var materialSurface: some View {
+        toastContent
+            .background(.regularMaterial, in: Capsule())
+            .shadow(radius: 4, y: 2)
+    }
+
+    private var toastContent: some View {
         HStack(spacing: 10) {
-            Image(systemName: "info.circle")
-            Text(message).lineLimit(2)
-            Button(action: dismiss) { Image(systemName: "xmark") }
+            Image(systemName: "info.circle").foregroundStyle(.secondary)
+            Text(message)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("status-toast-message")
+            Button(action: dismiss) {
+                Image(systemName: "xmark")
+                    .padding(4)
+                    .contentShape(Rectangle())
+            }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Dismiss")
+                .accessibilityIdentifier("dismiss-status-toast")
         }
+        .font(.callout)
+        .foregroundStyle(.primary)
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(.regularMaterial, in: Capsule())
-        .shadow(radius: 4, y: 2)
-        .task(id: message) {
-            try? await Task.sleep(for: .seconds(6))
-            dismiss()
-        }
     }
 }
 

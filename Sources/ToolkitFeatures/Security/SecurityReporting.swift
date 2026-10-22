@@ -38,7 +38,7 @@ public enum SecurityReportWriter {
     public static func renderCSV(_ report: SecurityAnalysisReport) -> String {
         let header = [
             "analysis_id", "started_at", "finished_at", "acquisition_method", "evidence_root",
-            "files_examined", "bytes_examined", "scanner_statuses", "acquisition_warnings", "limitations",
+            "files_examined", "bytes_examined", "scanner_statuses", "acquisition_warnings", "limitations", "status_summary",
             "correlation_id", "title", "severity", "classification", "matched_indicator",
             "indicator_type", "scanners", "artifact_paths", "timestamps", "finding_ids",
             "explanation", "false_positive_notes",
@@ -54,6 +54,7 @@ public enum SecurityReportWriter {
             report.scannerExecutions.map { "\($0.metadata.name)=\($0.status.rawValue)" }.joined(separator: "; "),
             report.acquisitionWarnings.joined(separator: "; "),
             report.limitations.joined(separator: "; "),
+            report.statusSummary,
         ]
         let findingRows = report.correlatedFindings.map { finding in
             reportFields + [

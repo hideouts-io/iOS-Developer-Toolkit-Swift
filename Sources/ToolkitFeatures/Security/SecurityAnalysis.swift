@@ -14,7 +14,7 @@ public enum SecurityAnalysisEngine {
 
     public static func matches(_ observation: EvidenceObservation, indicator: SecurityIndicator) -> Bool {
         let expected = normalize(indicator.type, indicator.value)
-        let actual = normalize(indicator.type, observation.observedValue)
+        let actual = indicator.type == .url ? "" : normalize(indicator.type, observation.observedValue)
         guard !expected.isEmpty else { return false }
         switch indicator.type {
         case .md5: return observation.observedType == "md5" && actual == expected
@@ -32,7 +32,7 @@ public enum SecurityAnalysisEngine {
                 let normalized = domain.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
                 return normalized == expected || normalized.hasSuffix("." + expected)
             }
-        case .url: return text.lowercased().contains(expected)
+        case .url: return matchedURLRange(in: text, expected: expected) != nil
         case .ipv4, .ipv6: return boundedMatch(expected, characterClass: "0-9A-Fa-f:.", text: text)
         case .email: return boundedMatch(expected, characterClass: "A-Za-z0-9._%+@-", text: text)
         case .phone:
@@ -103,6 +103,7 @@ public enum SecurityAnalysisEngine {
                 "No result can guarantee that an iPhone or iPad is clean or uncompromised.",
                 "IOC matches are investigative leads and require manual validation against context and independent evidence.",
                 "The native scanner reads only supported, bounded artifacts available in the selected evidence source.",
+                "Native URL matching recognizes complete HTTP(S) URL tokens; ambiguous adjacent punctuation is kept as part of the URL instead of being discarded.",
                 "Encrypted or unavailable artifacts, unsupported STIX semantics, and parser failures remain explicit coverage gaps.",
                 "MVT results are normalized only from an independently generated output folder; MVT is not bundled or reimplemented.",
             ]
@@ -112,6 +113,10 @@ public enum SecurityAnalysisEngine {
     private static func scanNative(_ request: SecurityScanRequest) throws -> SecurityScannerExecution {
         let startedAt = timestamp()
         let indicators = request.intelligence.flatMap(\.indicators)
+        let unsupportedURLCount = indicators.filter { $0.type == .url && normalizedURL($0.value) == nil }.count
+        guard unsupportedURLCount == 0 else {
+            throw ToolkitError.invalidInput("\(unsupportedURLCount) URL indicators cannot be compared: native matching supports absolute HTTP(S) URLs with a host. Correct or remove those indicators and scan again.")
+        }
         let acquisition = try SecurityEvidenceAcquisition.acquire(request, hashTypes: indicators.map(\.type))
         var findings: [SecurityFinding] = []
         var seen = Set<String>()
@@ -171,6 +176,9 @@ public enum SecurityAnalysisEngine {
     private static func nativeFinding(_ observation: EvidenceObservation, indicator: SecurityIndicator) -> SecurityFinding {
         let highConfidence = (indicator.confidence ?? 0) >= 70
         let normalized = normalize(indicator.type, indicator.value)
+        let matchedRange = indicator.type == .url
+            ? matchedURLRange(in: observation.observedValue, expected: normalized)
+            : observation.observedValue.range(of: indicator.value, options: [.caseInsensitive])
         let identity = "native-ioc\u{0}\(indicator.id)\u{0}\(indicator.type.rawValue)\u{0}\(observation.artifactPath)\u{0}\(observation.table ?? "")\u{0}\(observation.recordID ?? "")"
         return SecurityFinding(
             id: String(SecureFileIO.sha256(of: Data(identity.utf8)).prefix(20)),
@@ -185,7 +193,7 @@ public enum SecurityAnalysisEngine {
             table: observation.table,
             recordID: observation.recordID,
             timestamp: observation.timestamp,
-            observedValue: excerpt(observation.observedValue, needle: indicator.value),
+            observedValue: excerpt(observation.observedValue, range: matchedRange),
             matchedIndicator: indicator.value,
             indicatorType: indicator.type,
             iocSource: indicator.provenance.sourceName,
@@ -196,7 +204,9 @@ public enum SecurityAnalysisEngine {
             sourceFile: observation.sourceFile,
             acquisitionMethod: observation.acquisitionMethod,
             falsePositiveNotes: "Legitimate software, messages, browsing, testing, shared infrastructure, or stale intelligence can produce the same observable. Validate surrounding timestamps and independent artifacts.",
-            detectionBasis: "Exact native comparison against an explicitly imported or updated indicator.",
+            detectionBasis: indicator.type == .url
+                ? "Exact HTTP(S) URL comparison after scheme, host, and default-port normalization; path, query, and fragment remain case-sensitive."
+                : "Exact native comparison against an explicitly imported or updated indicator.",
             correlationKey: "\(indicator.type.rawValue):\(normalized)"
         )
     }
@@ -249,13 +259,44 @@ public enum SecurityAnalysisEngine {
     private static func normalize(_ type: SecurityIndicatorType, _ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         switch type {
-        case .domain, .url, .email, .process, .bundleID, .filename, .path: return trimmed.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        case .domain, .email, .process, .bundleID, .filename, .path: return trimmed.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        case .url: return normalizedURL(trimmed) ?? ""
         case .phone:
             let prefix = trimmed.hasPrefix("+") ? "+" : ""
             return prefix + trimmed.filter(\.isNumber)
         case .md5, .sha1, .sha256, .certificateSHA256: return trimmed.lowercased().replacingOccurrences(of: ":", with: "")
         case .ipv4, .ipv6, .configurationProfileID: return trimmed.lowercased()
         }
+    }
+
+    private static func matchedURLRange(in text: String, expected: String) -> Range<String.Index>? {
+        guard let expression = try? NSRegularExpression(pattern: #"(?i)(?<![\w/])https?://[^\s<>"`]+"#) else { return nil }
+        for match in expression.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            guard let range = Range(match.range, in: text) else { continue }
+            if normalizedURL(String(text[range])) == expected { return range }
+        }
+        return nil
+    }
+
+    /// Compare only absolute HTTP(S) URLs. Authority is case-insensitive and default ports are
+    /// equivalent; path, query, fragment, and percent-encoded spelling remain distinct.
+    private static func normalizedURL(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
+              let components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = components.host, !host.isEmpty
+        else { return nil }
+        var normalized = components
+        normalized.scheme = scheme
+        let authorityHost = host.lowercased()
+        normalized.host = authorityHost.hasSuffix(".") ? String(authorityHost.dropLast()) : authorityHost
+        guard normalized.host?.isEmpty == false else { return nil }
+        if (scheme == "http" && normalized.port == 80) || (scheme == "https" && normalized.port == 443) {
+            normalized.port = nil
+        }
+        guard normalized.url != nil else { return nil }
+        return normalized.string
     }
 
     private static func boundedMatch(_ value: String, characterClass: String, text: String) -> Bool {
@@ -268,8 +309,8 @@ public enum SecurityAnalysisEngine {
         return expression.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { Range($0.range, in: text).map { String(text[$0]) } }
     }
 
-    private static func excerpt(_ value: String, needle: String) -> String {
-        guard let range = value.range(of: needle, options: [.caseInsensitive]) else { return String(needle.prefix(240)) }
+    private static func excerpt(_ value: String, range: Range<String.Index>?) -> String {
+        guard let range else { return String(value.replacingOccurrences(of: "\n", with: " ").prefix(320)) }
         let start = value.index(range.lowerBound, offsetBy: -min(80, value.distance(from: value.startIndex, to: range.lowerBound)))
         let remaining = value.distance(from: range.upperBound, to: value.endIndex)
         let end = value.index(range.upperBound, offsetBy: min(80, remaining))

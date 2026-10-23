@@ -54,6 +54,69 @@ struct SecurityAnalysisTests {
         #expect(noMatch.statusSummary.contains("not proof that the device is clean"))
     }
 
+    @Test func nativeURLMatchesCompleteTokensAndPreservesPathQueryAndEncoding() async throws {
+        let directory = try SecureFileIO.makeTemporaryDirectory(prefix: "security-url-match")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let evidence = directory.appendingPathComponent("evidence", isDirectory: true)
+        try SecureFileIO.createPrivateDirectory(at: evidence)
+        let observations = [
+            ("exact-uppercase.txt", "Visited HTTPS://BAD.EXAMPLE:443/Path?Token=Yes"),
+            ("exact.txt", "Visited https://bad.example/Path?Token=Yes"),
+            ("spaced-case.txt", "Visited https://bad.example/path?Token=Yes " + String(repeating: "x", count: 400) + " https://bad.example/Path?Token=Yes"),
+            ("longer-path.txt", "Visited https://bad.example/Pathology?Token=Yes"),
+            ("longer-query.txt", "Visited https://bad.example/Path?Token=Yes&other=1"),
+            ("host-prefix.txt", "Visited https://bad.example.evil/Path?Token=Yes"),
+            ("text-prefix.txt", "Observed xhttps://bad.example/Path?Token=Yes"),
+            ("underscore-prefix.txt", "Observed _https://bad.example/Path?Token=Yes"),
+            ("unicode-prefix.txt", "Observed éhttps://bad.example/Path?Token=Yes"),
+            ("containing-url.txt", "Visited https://good.example/https://bad.example/Path?Token=Yes"),
+            ("path-case.txt", "Visited https://bad.example/path?Token=Yes"),
+            ("query-case.txt", "Visited https://bad.example/Path?token=Yes"),
+            ("punctuation.txt", "Visited https://bad.example/Path?Token=Yes, later"),
+            ("encoded.txt", "Visited https://bad.example/Path%2FLeaf?Token=Yes"),
+            ("decoded.txt", "Visited https://bad.example/Path/Leaf?Token=Yes"),
+        ]
+        for (name, content) in observations {
+            try SecureFileIO.writeNewFile(Data(content.utf8), to: evidence.appendingPathComponent(name))
+        }
+        let ioc = directory.appendingPathComponent("urls.stix2")
+        let document = """
+        {"type":"bundle","objects":[
+          {"type":"indicator","id":"indicator--plain-url","pattern_type":"stix","pattern":"[url:value = 'https://bad.example/Path?Token=Yes']"},
+          {"type":"indicator","id":"indicator--encoded-url","pattern_type":"stix","pattern":"[url:value = 'https://bad.example/Path%2FLeaf?Token=Yes']"}
+        ]}
+        """
+        try SecureFileIO.writeNewFile(Data(document.utf8), to: ioc)
+        let intelligence = try load(ioc)
+        #expect(intelligence.indicators.map(\.type) == [.url, .url])
+        let report = try await SecurityAnalysisEngine.analyze(request(evidence, method: .importedEvidence, intelligence: [intelligence]))
+        #expect(report.scannerExecutions.map(\.status) == [.completed])
+        #expect(report.findings.map(\.artifactPath).sorted() == ["encoded.txt", "exact-uppercase.txt", "exact.txt", "spaced-case.txt"])
+        #expect(report.findings.allSatisfy { $0.detectionBasis.contains("path, query, and fragment remain case-sensitive") })
+        #expect(report.findings.first { $0.artifactPath == "exact-uppercase.txt" }?.observedValue.contains("HTTPS://BAD.EXAMPLE:443/Path?Token=Yes") == true)
+        #expect(report.findings.first { $0.artifactPath == "spaced-case.txt" }?.observedValue.contains("https://bad.example/Path?Token=Yes") == true)
+        #expect(report.findings.first { $0.artifactPath == "spaced-case.txt" }?.observedValue.contains("https://bad.example/path?Token=Yes") == false)
+        let destination = directory.appendingPathComponent("url-report.json")
+        try SecurityReportWriter.write(report, format: .json, to: destination)
+        let exported = try JSONDecoder().decode(SecurityAnalysisReport.self, from: Data(contentsOf: destination))
+        #expect(exported.findings.map(\.artifactPath).sorted() == ["encoded.txt", "exact-uppercase.txt", "exact.txt", "spaced-case.txt"])
+        #expect(exported.findings.first { $0.artifactPath == "exact-uppercase.txt" }?.observedValue.contains("HTTPS://BAD.EXAMPLE:443/Path?Token=Yes") == true)
+        #expect(exported.findings.first { $0.artifactPath == "spaced-case.txt" }?.observedValue.contains("https://bad.example/Path?Token=Yes") == true)
+    }
+
+    @Test func unsupportedURLIndicatorFailsTheNativeScanExplicitly() async throws {
+        let directory = try SecureFileIO.makeTemporaryDirectory(prefix: "security-unsupported-url")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let evidence = directory.appendingPathComponent("evidence.txt")
+        try SecureFileIO.writeNewFile(Data("ftp://bad.example/Path".utf8), to: evidence)
+        let ioc = directory.appendingPathComponent("ioc.json")
+        try SecureFileIO.writeNewFile(Data(#"{"indicators":[{"id":"unsupported","type":"url","value":"ftp://bad.example/Path"}]}"#.utf8), to: ioc)
+        let report = try await SecurityAnalysisEngine.analyze(request(evidence, method: .importedEvidence, intelligence: [try load(ioc)]))
+        #expect(report.scannerExecutions.map(\.status) == [.failed])
+        #expect(report.scannerExecutions[0].errorMessage?.contains("absolute HTTP(S) URLs") == true)
+        #expect(report.findings.isEmpty)
+    }
+
     @Test func acquisitionIsBoundedAndRefusesSymlinkRoots() throws {
         let directory = try SecureFileIO.makeTemporaryDirectory(prefix: "security-bounds")
         defer { try? FileManager.default.removeItem(at: directory) }

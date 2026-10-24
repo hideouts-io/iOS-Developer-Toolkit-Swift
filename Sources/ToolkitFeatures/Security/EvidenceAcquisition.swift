@@ -240,7 +240,7 @@ public enum SecurityEvidenceAcquisition {
         if try hasNonEmptyWAL(at: root.appendingPathComponent("Manifest.db-wal")) {
             throw ToolkitError(
                 .invalidInput,
-                message: "Backup inventory is incomplete because Manifest.db-wal contains unapplied SQLite changes.",
+                message: "Backup inventory cannot be verified while a nonempty Manifest.db-wal is present.",
                 recovery: "Provide a consistent backup snapshot with a checkpointed Manifest.db, then scan it again."
             )
         }

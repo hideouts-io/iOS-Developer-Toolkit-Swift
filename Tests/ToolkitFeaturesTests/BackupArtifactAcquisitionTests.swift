@@ -123,7 +123,7 @@ struct BackupArtifactAcquisitionTests {
         } catch {
             let failure = try #require(error as? ToolkitError)
             #expect(failure.message.contains("Manifest.db-wal"))
-            #expect(failure.message.contains("incomplete"))
+            #expect(failure.message.contains("cannot be verified"))
         }
         #expect(try Data(contentsOf: manifest) == snapshot.database)
         #expect(try Data(contentsOf: wal) == snapshot.wal)

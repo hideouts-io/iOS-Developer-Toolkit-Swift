@@ -150,6 +150,20 @@ public enum SecurityEvidenceAcquisition {
             throw ToolkitError.invalidInput("The selected evidence path is not a regular file or folder.")
         }
 
+        var walBases: Set<String> = []
+        for file in files where file.logicalPath.hasSuffix("-wal") {
+            if try hasNonEmptyWAL(at: file.url) {
+                walBases.insert(String(file.logicalPath.dropLast(4)))
+            }
+        }
+        if rootValues.isRegularFile == true, let file = files.first,
+           try hasNonEmptyWAL(at: URL(fileURLWithPath: file.url.path + "-wal")) {
+            walBases.insert(file.logicalPath)
+        }
+        for file in files where walBases.contains(file.logicalPath) {
+            appendWarning("SQLite WAL companion for \(file.logicalPath) was not applied; uncheckpointed rows may be missing and content coverage is incomplete.", to: &warnings)
+        }
+
         let algorithms = Array(Set(hashTypes.compactMap(hashAlgorithm))).sorted()
         var observations: [EvidenceObservation] = []
         var bytesExamined: Int64 = 0
@@ -222,6 +236,13 @@ public enum SecurityEvidenceAcquisition {
             guard values.isRegularFile == true, values.isSymbolicLink != true else {
                 throw ToolkitError.invalidInput("Backup analysis requires \(requiredFile.lastPathComponent) to be a regular file, not a symbolic link.")
             }
+        }
+        if try hasNonEmptyWAL(at: root.appendingPathComponent("Manifest.db-wal")) {
+            throw ToolkitError(
+                .invalidInput,
+                message: "Backup inventory is incomplete because Manifest.db-wal contains unapplied SQLite changes.",
+                recovery: "Provide a consistent backup snapshot with a checkpointed Manifest.db, then scan it again."
+            )
         }
         var files = Array([
             SecurityEvidenceFile(url: info, logicalPath: "Info.plist", artifactType: "backup-metadata"),
@@ -458,5 +479,18 @@ public enum SecurityEvidenceAcquisition {
     private static func appendWarning(_ warning: String, to warnings: inout [String]) {
         if warnings.count < maximumWarnings { warnings.append(warning) }
         else if warnings.count == maximumWarnings { warnings.append("Additional acquisition warnings were omitted after the 200-warning limit.") }
+    }
+
+    private static func hasNonEmptyWAL(at url: URL) throws -> Bool {
+        var details = stat()
+        if lstat(url.path, &details) == 0 {
+            guard (details.st_mode & S_IFMT) == S_IFREG else {
+                throw ToolkitError.invalidInput("The SQLite WAL companion at \(url.lastPathComponent) must be a regular file, not a symbolic link or special file.")
+            }
+            return details.st_size > 0
+        }
+        let code = errno
+        if code == ENOENT { return false }
+        throw ToolkitError.fileSystem("Could not inspect the SQLite WAL companion.", path: url.path, underlying: POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO))
     }
 }

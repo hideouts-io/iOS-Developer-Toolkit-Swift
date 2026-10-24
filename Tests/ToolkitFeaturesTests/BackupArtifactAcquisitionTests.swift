@@ -69,6 +69,66 @@ struct BackupArtifactAcquisitionTests {
         }
     }
 
+    @Test func mappedSQLiteWALKeepsRawHashesAndMarksReportsIncomplete() async throws {
+        let directory = try SecureFileIO.makeTemporaryDirectory(prefix: "backup-sqlite-wal")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = directory.appendingPathComponent("source.db")
+        try createSQLite(source, statements: ["CREATE TABLE Events (message TEXT)"])
+        let snapshot = try walSnapshot(source, statements: ["INSERT INTO Events VALUES ('uncheckpointed.example')"])
+        let backup = directory.appendingPathComponent("backup")
+        try SecureFileIO.createPrivateDirectory(at: backup)
+        let database = try payload(backup, domain: "HomeDomain", relativePath: "Library/History.db")
+        let wal = try payload(backup, domain: "HomeDomain", relativePath: "Library/History.db-wal")
+        try SecureFileIO.writeNewFile(snapshot.database, to: database.url)
+        try SecureFileIO.writeNewFile(snapshot.wal, to: wal.url)
+        try createBackupMetadata(backup, payloads: [database, wal])
+        let scan = request(backup, maximumFiles: 100, maximumFileBytes: 1_000_000, maximumTotalBytes: 5_000_000, maximumSQLiteRows: 100)
+
+        let acquired = try SecurityEvidenceAcquisition.acquire(scan, hashTypes: [.sha256])
+
+        #expect(!acquired.observations.contains { $0.artifactPath == database.logicalPath && $0.observedValue == "uncheckpointed.example" })
+        #expect(acquired.warnings.contains { $0.contains(database.logicalPath) && $0.contains("WAL") && $0.contains("incomplete") })
+        for (file, bytes) in [(database, snapshot.database), (wal, snapshot.wal)] {
+            #expect(acquired.observations.contains { $0.artifactPath == file.logicalPath && $0.observedType == "sha256" && $0.observedValue == hex(SHA256.hash(data: bytes)) })
+            #expect(try Data(contentsOf: file.url) == bytes)
+        }
+
+        let report = try await SecurityAnalysisEngine.analyze(scan)
+        #expect(report.statusSummary.contains("coverage is incomplete"))
+        #expect(report.acquisitionWarnings.contains { $0.contains(database.logicalPath) && $0.contains("WAL") })
+        let exported = directory.appendingPathComponent("coverage.json")
+        try SecurityReportWriter.write(report, format: .json, to: exported)
+        let decoded = try JSONDecoder().decode(SecurityAnalysisReport.self, from: Data(contentsOf: exported))
+        #expect(decoded.statusSummary.contains("coverage is incomplete"))
+        #expect(decoded.acquisitionWarnings.contains { $0.contains(database.logicalPath) && $0.contains("WAL") })
+    }
+
+    @Test func uncheckpointedManifestWALFailsBeforeInventory() throws {
+        let directory = try SecureFileIO.makeTemporaryDirectory(prefix: "backup-manifest-wal")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = directory.appendingPathComponent("manifest-source.db")
+        try createSQLite(source, statements: ["CREATE TABLE Files (fileID TEXT, domain TEXT, relativePath TEXT, flags INTEGER)"])
+        let snapshot = try walSnapshot(source, statements: ["INSERT INTO Files VALUES ('0123456789abcdef0123456789abcdef01234567', 'HomeDomain', 'Library/new.db', 1)"])
+        let backup = directory.appendingPathComponent("backup")
+        try SecureFileIO.createPrivateDirectory(at: backup)
+        try SecureFileIO.writeNewFile(try PropertyListSerialization.data(fromPropertyList: ["Device Name": "Synthetic Test"], format: .xml, options: 0), to: backup.appendingPathComponent("Info.plist"))
+        let manifest = backup.appendingPathComponent("Manifest.db")
+        let wal = backup.appendingPathComponent("Manifest.db-wal")
+        try SecureFileIO.writeNewFile(snapshot.database, to: manifest)
+        try SecureFileIO.writeNewFile(snapshot.wal, to: wal)
+
+        do {
+            _ = try SecurityEvidenceAcquisition.acquire(request(backup, maximumFiles: 2, maximumFileBytes: 1_000_000, maximumTotalBytes: 5_000_000, maximumSQLiteRows: 100), hashTypes: [])
+            Issue.record("An uncheckpointed Manifest.db WAL unexpectedly produced a complete backup inventory.")
+        } catch {
+            let failure = try #require(error as? ToolkitError)
+            #expect(failure.message.contains("Manifest.db-wal"))
+            #expect(failure.message.contains("incomplete"))
+        }
+        #expect(try Data(contentsOf: manifest) == snapshot.database)
+        #expect(try Data(contentsOf: wal) == snapshot.wal)
+    }
+
     @Test func rejectsUnsafeLogicalPathsAndSymlinkedPayloadsAndBuckets() throws {
         let root = try SecureFileIO.makeTemporaryDirectory(prefix: "backup-paths")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -372,6 +432,24 @@ struct BackupArtifactAcquisitionTests {
                 throw ToolkitError(.internalInconsistency, message: "Could not initialize the synthetic SQLite file.")
             }
         }
+    }
+
+    private func walSnapshot(_ url: URL, statements: [String]) throws -> (database: Data, wal: Data) {
+        var database: OpaquePointer?
+        guard sqlite3_open(url.path, &database) == SQLITE_OK, let database else {
+            if let database { sqlite3_close(database) }
+            throw ToolkitError.fileSystem("Could not open the synthetic SQLite WAL source.", path: url.path)
+        }
+        defer { sqlite3_close(database) }
+        for sql in ["PRAGMA journal_mode=WAL", "PRAGMA wal_autocheckpoint=0"] + statements {
+            guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
+                throw ToolkitError(.internalInconsistency, message: "Could not create the synthetic SQLite WAL fixture.")
+            }
+        }
+        let wal = URL(fileURLWithPath: url.path + "-wal")
+        let walBytes = try Data(contentsOf: wal)
+        guard !walBytes.isEmpty else { throw ToolkitError(.internalInconsistency, message: "The synthetic SQLite WAL is empty.") }
+        return (try Data(contentsOf: url), walBytes)
     }
 
     private func rowStatements(count: Int) -> [String] {

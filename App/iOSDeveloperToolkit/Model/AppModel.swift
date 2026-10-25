@@ -76,7 +76,10 @@ final class AppModel {
 
     var snapshot = DiscoverySnapshot()
     var selectedDeviceID: String? {
-        didSet { UserDefaults.standard.set(selectedDeviceID, forKey: "selectedDeviceID") }
+        didSet {
+            UserDefaults.standard.set(selectedDeviceID, forKey: "selectedDeviceID")
+            if oldValue != selectedDeviceID { apps.selectionChanged() }
+        }
     }
     var workspace: Workspace = .overview
     /// The Actions page's category filter and selection (set by profiles and the command palette).

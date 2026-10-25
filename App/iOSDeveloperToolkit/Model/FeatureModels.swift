@@ -24,6 +24,13 @@ struct AppRow: Identifiable, Hashable, Sendable {
     var sizeText: String { ByteFormatting.string(sizeBytes) }
 }
 
+/// Captures the row, inventory generation and device named by the confirmation.
+struct AppInventoryAction: Sendable {
+    let row: AppRow
+    let device: Device
+    let inventoryID: UUID
+}
+
 @Observable
 @MainActor
 final class AppsModel {
@@ -36,6 +43,37 @@ final class AppsModel {
     var sortOrder = [KeyPathComparator(\AppRow.name, comparator: .localizedStandard)]
     var selection: Set<AppRow.ID> = []
     var isLoading = false
+    private var refreshID = UUID()
+    private var inventoryID = UUID()
+    private var refreshOperation: RunningOperation?
+    private var changingApps: Set<String> = []
+
+    func selectionChanged() {
+        selection = []
+        refreshID = UUID()
+        inventoryID = UUID()
+        refreshOperation?.cancel()
+        refreshOperation = nil
+        isLoading = false
+    }
+
+    func canAct(on row: AppRow, device: Device, selectedTarget: DeviceTarget?) -> Bool {
+        selectedTarget == device.target && loadedFor == device.target && rows.contains(row) && !isLoading
+            && !changingApps.contains(row.id) && device.kind != .demo
+    }
+
+    func prepareAction(for row: AppRow, device: Device, selectedTarget: DeviceTarget?) throws -> AppInventoryAction {
+        guard canAct(on: row, device: device, selectedTarget: selectedTarget) else {
+            throw ToolkitError(.invalidInput, message: "Load the current device’s apps before using this row.", recovery: "Refresh Installed Apps and choose the app again.", technicalDetail: nil)
+        }
+        return AppInventoryAction(row: row, device: device, inventoryID: inventoryID)
+    }
+
+    private func validate(_ request: AppInventoryAction, selectedTarget: DeviceTarget?) throws {
+        guard request.inventoryID == inventoryID && canAct(on: request.row, device: request.device, selectedTarget: selectedTarget) else {
+            throw ToolkitError(.invalidInput, message: "The app list changed after this action was confirmed.", recovery: "Refresh Installed Apps and confirm the action again.", technicalDetail: nil)
+        }
+    }
 
     var visibleRows: [AppRow] {
         let filtered = rows.filter { row in
@@ -47,11 +85,25 @@ final class AppsModel {
 
     func refresh(app: AppModel, device: Device) async {
         let target = device.target
+        guard app.selectedTarget == target else {
+            app.present(ToolkitError(.invalidInput, message: "The selected device changed before its apps could load.", recovery: "Select the device and load Installed Apps again.", technicalDetail: nil))
+            return
+        }
         let runner = app.runner
         let sizes = calculateSizes
+        let generation = UUID()
+        refreshID = generation
+        inventoryID = UUID()
+        refreshOperation?.cancel()
+        selection = []
         isLoading = true
-        defer { isLoading = false }
-        let result: (rows: [AppRow], source: String)? = await app.run("Load installed apps", workspace: .apps, target: target, transport: device.kind == .simulator ? "simctl listapps" : (device.supportsLockdownServices ? "installation_proxy" : "devicectl device info apps")) { _ in
+        defer {
+            if refreshID == generation {
+                isLoading = false
+                refreshOperation = nil
+            }
+        }
+        let result: (rows: [AppRow], source: String)? = await app.run("Load installed apps", workspace: .apps, target: target, transport: device.kind == .simulator ? "simctl listapps" : (device.supportsLockdownServices ? "installation_proxy" : "devicectl device info apps"), onStart: { self.refreshOperation = $0 }) { _ in
             switch device.kind {
             case .simulator:
                 let apps = try await SimulatorClient(runner: runner).apps(target)
@@ -73,16 +125,43 @@ final class AppsModel {
                 ], "Demo data")
             }
         }
-        if let result {
+        if let result, refreshID == generation, app.selectedTarget == target {
             rows = result.rows
             source = result.source
             loadedFor = target
+            inventoryID = UUID()
         }
     }
 
-    func uninstall(_ row: AppRow, app: AppModel, device: Device) async {
+    func launch(_ request: AppInventoryAction, app: AppModel) async {
+        do { try validate(request, selectedTarget: app.selectedTarget) } catch { app.present(error); return }
+        guard let action = ActionCatalog.descriptor("launch-app") else {
+            app.present(ToolkitError(.internalInconsistency, message: "The Launch App action is unavailable.", recovery: nil, technicalDetail: nil))
+            return
+        }
+        let row = request.row
+        let target = request.device.target
+        let executor = app.executor
+        changingApps.insert(row.id)
+        defer { changingApps.remove(row.id) }
+        if let result = await app.run("Launch \(row.name)", workspace: .apps, target: target, transport: action.mechanism, { _ in
+            try await executor.execute(action, target: target, values: ["bundle": row.bundleIdentifier])
+        }) { app.statusMessage = result.summary }
+    }
+
+    func uninstall(_ request: AppInventoryAction, app: AppModel) async {
+        do {
+            try validate(request, selectedTarget: app.selectedTarget)
+            guard request.row.isRemovable else {
+                throw ToolkitError(.unsupported, message: "This app cannot be removed.", recovery: nil, technicalDetail: nil)
+            }
+        } catch { app.present(error); return }
+        let row = request.row
+        let device = request.device
         let target = device.target
         let runner = app.runner
+        changingApps.insert(row.id)
+        defer { changingApps.remove(row.id) }
         let succeeded = await app.run("Remove \(row.name)", workspace: .apps, target: target, transport: device.kind == .simulator ? "simctl uninstall" : "installation_proxy / devicectl", argv: [row.bundleIdentifier]) { operation in
             switch device.kind {
             case .simulator:
@@ -101,7 +180,10 @@ final class AppsModel {
             return true
         }
         if succeeded == true {
-            rows.removeAll { $0.id == row.id }
+            if loadedFor == target && inventoryID == request.inventoryID {
+                rows.removeAll { $0.id == row.id }
+                selection.remove(row.id)
+            }
             app.statusMessage = "Removed \(row.name) from \(target.name)."
         }
     }

@@ -35,19 +35,22 @@ struct AppsView: View {
                         .foregroundStyle(.orange)
                 }
                 Table(apps.visibleRows, selection: $apps.selection, sortOrder: $apps.sortOrder) {
-                    TableColumn("Name", value: \.name)
+                    TableColumn("Name", value: \.name) { Text($0.name).accessibilityIdentifier("installed-app-\($0.bundleIdentifier)") }
                     TableColumn("Bundle ID", value: \.bundleIdentifier) { Text($0.bundleIdentifier).font(.callout.monospaced()) }
                     TableColumn("Version", value: \.version) { Text($0.build.isEmpty ? $0.version : "\($0.version) (\($0.build))") }
                     TableColumn("Type", value: \.kind)
                     TableColumn("Size") { Text($0.sizeText).monospacedDigit() }
                         .width(min: 70, ideal: 90)
                 }
+                .accessibilityIdentifier("installed-apps-table")
                 .contextMenu(forSelectionType: AppRow.ID.self) { ids in
                     if let id = ids.first, let row = apps.rows.first(where: { $0.id == id }) {
                         Button("Copy Bundle ID") { Pasteboard.copy(row.bundleIdentifier) }
-                        Button("Launch") { launch(row, device) }.disabled(device.kind == .demo)
+                        Button("Launch") { launch(row, device) }.disabled(!apps.canAct(on: row, device: device, selectedTarget: model.selectedTarget))
+                            .accessibilityIdentifier("apps-context-launch")
                         Divider()
-                        Button("Remove…", role: .destructive) { confirmRemove(row, device) }.disabled(!row.isRemovable || device.kind == .demo)
+                        Button("Remove…", role: .destructive) { confirmRemove(row, device) }.disabled(!row.isRemovable || !apps.canAct(on: row, device: device, selectedTarget: model.selectedTarget))
+                            .accessibilityIdentifier("apps-context-remove")
                     }
                 }
                 .overlay {
@@ -62,36 +65,38 @@ struct AppsView: View {
                     Spacer()
                     if let id = apps.selection.first, let row = apps.rows.first(where: { $0.id == id }) {
                         Button("Copy Bundle ID") { Pasteboard.copy(row.bundleIdentifier) }
-                        Button("Launch") { launch(row, device) }.disabled(device.kind == .demo)
+                        Button("Launch") { launch(row, device) }.disabled(!apps.canAct(on: row, device: device, selectedTarget: model.selectedTarget))
+                            .accessibilityIdentifier("apps-launch")
                         Button("Remove…", role: .destructive) { confirmRemove(row, device) }
-                            .disabled(!row.isRemovable || device.kind == .demo)
+                            .disabled(!row.isRemovable || !apps.canAct(on: row, device: device, selectedTarget: model.selectedTarget))
+                            .accessibilityIdentifier("apps-remove")
                     }
                 }
             }
         }
         .padding(20)
+        .onChange(of: model.selectedTarget) { _, _ in confirmation = nil }
         .sheet(item: $confirmation) { pending in
             ConfirmationSheet(title: pending.title, detail: pending.detail, requirement: pending.requirement, target: pending.target, commandPreview: nil, onConfirm: pending.action)
         }
     }
 
     private func confirmRemove(_ row: AppRow, _ device: Device) {
-        confirmation = PendingConfirmation(title: "Remove \(row.name)?", detail: "\(row.name) (\(row.bundleIdentifier)) and its data will be deleted from \(device.name).", requirement: .make(for: .highImpact, target: device.target), target: device.target) {
-            Task { await model.apps.uninstall(row, app: model, device: device) }
-        }
+        do {
+            let request = try model.apps.prepareAction(for: row, device: device, selectedTarget: model.selectedTarget)
+            confirmation = PendingConfirmation(title: "Remove \(row.name)?", detail: "\(row.name) (\(row.bundleIdentifier)) and its data will be deleted from \(device.name).", requirement: .make(for: .highImpact, target: request.device.target), target: request.device.target) {
+                Task { await model.apps.uninstall(request, app: model) }
+            }
+        } catch { model.present(error) }
     }
 
     private func launch(_ row: AppRow, _ device: Device) {
-        guard let action = ActionCatalog.descriptor("launch-app") else { return }
-        confirmation = PendingConfirmation(title: "Launch \(row.name)?", detail: "The app is restarted if it is already running.", requirement: .make(for: .deviceChange, target: device.target), target: device.target) {
-            let executor = model.executor
-            let target = device.target
-            Task {
-                if let result = await model.run("Launch \(row.name)", workspace: .apps, target: target, transport: action.mechanism, { _ in try await executor.execute(action, target: target, values: ["bundle": row.bundleIdentifier]) }) {
-                    model.statusMessage = result.summary
-                }
+        do {
+            let request = try model.apps.prepareAction(for: row, device: device, selectedTarget: model.selectedTarget)
+            confirmation = PendingConfirmation(title: "Launch \(row.name)?", detail: "The app is restarted on \(device.name) if it is already running.", requirement: .make(for: .deviceChange, target: request.device.target), target: request.device.target) {
+                Task { await model.apps.launch(request, app: model) }
             }
-        }
+        } catch { model.present(error) }
     }
 }
 

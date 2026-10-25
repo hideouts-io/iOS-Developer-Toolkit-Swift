@@ -125,7 +125,7 @@ final class AppsModel {
                 ], "Demo data")
             }
         }
-        if let result, refreshID == generation, app.selectedTarget == target {
+        if let result, refreshID == generation {
             rows = result.rows
             source = result.source
             loadedFor = target

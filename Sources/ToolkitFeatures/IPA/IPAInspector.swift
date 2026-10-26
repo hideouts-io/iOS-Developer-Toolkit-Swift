@@ -95,6 +95,14 @@ public enum IPAInspector {
         }
         let appRoot = String(infoEntry.name.dropLast("/Info.plist".count))
         let bundleIdentifier = try required("CFBundleIdentifier")
+        guard let platformValues = info["CFBundleSupportedPlatforms"]?.arrayValue, !platformValues.isEmpty else {
+            throw ToolkitError.invalidInput("The app's Info.plist must declare CFBundleSupportedPlatforms as a nonempty string array.")
+        }
+        let supportedPlatforms = platformValues.compactMap(\.stringValue)
+        guard supportedPlatforms.count == platformValues.count,
+              supportedPlatforms.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+            throw ToolkitError.invalidInput("CFBundleSupportedPlatforms contains a non-string or empty value.")
+        }
 
         let provisioning: ProvisioningProfileSummary
         if let profileEntry = archive.entry(named: "\(appRoot)/embedded.mobileprovision") {
@@ -122,7 +130,7 @@ public enum IPAInspector {
             build: try required("CFBundleVersion"),
             minimumOSVersion: info["MinimumOSVersion"]?.stringValue,
             executableName: try required("CFBundleExecutable"),
-            supportedPlatforms: info["CFBundleSupportedPlatforms"]?.arrayValue?.compactMap(\.stringValue) ?? [],
+            supportedPlatforms: supportedPlatforms,
             provisioning: provisioning,
             signature: signature
         )

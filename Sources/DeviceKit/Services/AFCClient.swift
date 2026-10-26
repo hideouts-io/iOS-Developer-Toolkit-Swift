@@ -154,6 +154,18 @@ public actor AFCClient {
         _ = try await transact(.makeDirectory, header: Self.path(path))
     }
 
+    /// Accepts an existing real directory or creates a missing one. Other AFC failures propagate.
+    public func ensureDirectory(_ path: String) async throws {
+        do {
+            let info = try await fileInfo(path)
+            guard info.isDirectory, !info.isSymbolicLink else {
+                throw ToolkitError(.fileSystem, message: "The requested device directory is a file or symbolic link.", recovery: "Choose a regular device directory before continuing.")
+            }
+        } catch let error as ToolkitError where error == Self.error(code: 8) {
+            try await makeDirectory(path)
+        }
+    }
+
     public func remove(_ path: String) async throws {
         _ = try await transact(.removePath, header: Self.path(path))
     }

@@ -112,8 +112,16 @@ struct RealSimulatorTests {
         // Install, list, launch, and remove a real (minimal) simulator app.
         step("building fixture app")
         let fixture = try await Self.buildFixtureApp(in: directory)
-        step("installing fixture app")
-        try await client.install(appAt: fixture, on: target)
+        let prepared = try PreparedAppPackage.prepare(fixture)
+        defer {
+            do { try prepared.remove() }
+            catch { Issue.record("Could not remove the prepared simulator fixture: \(error.localizedDescription)") }
+        }
+        #expect(prepared.packageURL != fixture)
+        try prepared.revalidate()
+        try prepared.validate(for: target, supportsCoreDevice: false, simulatorBooted: booted)
+        step("installing prepared fixture app")
+        try await client.install(appAt: prepared.packageURL, on: target)
         #expect(try await client.apps(target).contains { $0.bundleIdentifier == Self.fixtureBundleID })
         let launched = try await client.launch(bundleIdentifier: Self.fixtureBundleID, on: target, terminateExisting: true)
         #expect(launched.contains(Self.fixtureBundleID))

@@ -38,14 +38,14 @@ jobs:
       - name: Test
         if: github.event_name != 'workflow_dispatch'
         run: swift test -Xswiftc -warnings-as-errors
-      - name: Diagnose package signing tests together
+      - name: Diagnose full package suite serially
         if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           set -euo pipefail
-          echo 'DIAGNOSTIC_START: three package signing tests together'
-          swift test -Xswiftc -warnings-as-errors --filter 'physicalAppRequiresCoreDeviceAndAnIntactSignature|signedIPAUsesTheApprovedCopyAndRetainsNativePhysicalInstallation|realSignatureIsVerifiedAndTamperingDetected'
-          echo 'DIAGNOSTIC_PASS: three package signing tests together'
+          echo 'DIAGNOSTIC_START: full package suite with explicit serial execution'
+          swift test --no-parallel -Xswiftc -warnings-as-errors
+          echo 'DIAGNOSTIC_PASS: full package suite with explicit serial execution'
       - name: Command-line tool smoke test
         run: |
           swift run idt --version

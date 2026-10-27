@@ -175,7 +175,7 @@ public actor EvidenceCollector {
         stopRequested = true
     }
 
-    public func run(events: @escaping @Sendable (CollectionEvent) -> Void) async -> CollectionManifest {
+    public func run(events: @escaping @Sendable (CollectionEvent) -> Void) async throws -> CollectionManifest {
         let started = Date()
         let target = device.target
         logger.info("Evidence collection started")
@@ -184,8 +184,6 @@ public actor EvidenceCollector {
         await snapshot("lockdown-values", "Lockdown device information", "lockdownd GetValue (native)", required: true, file: "snapshots/lockdown-info.json", events: events) {
             try await DeviceSession.with(target, usbmux: self.usbmux) { try await $0.getValue() ?? .dictionary([:]) }.prettyJSONString()
         }
-        try? SecureFileIO.writeNewFile(try JSONOutput.encode(device), to: caseFolder.appendingPathComponent("snapshots/device-record.json"))
-
         let identified = steps.first?.status == .succeeded
         if identified {
             await collectSnapshots(target, events: events)
@@ -195,16 +193,40 @@ public actor EvidenceCollector {
 
         events(.finalizing)
         let succeeded = steps.allSatisfy { $0.status == .succeeded }
-        let outcome: CollectionOutcome = !identified ? .failed : (succeeded ? .complete : .partial)
-        let manifest = CollectionManifest(applicationVersion: ToolkitVersion.current, targetUDID: target.udid, targetName: target.name, targetModel: device.marketingName ?? device.productType, targetOSVersion: device.osVersion, targetBuild: device.buildVersion, options: options, startedAt: started, finishedAt: Date(), outcome: outcome, stoppedEarly: stopRequested, steps: steps)
-        do {
-            try SecureFileIO.writeNewFile(try JSONOutput.encode(manifest), to: caseFolder.appendingPathComponent(CaseWorkflow.manifestFileName))
-            try HashManifest.write(for: caseFolder, fileName: "SHA256SUMS")
-        } catch {
-            logger.error("Could not finalize the case: \(error.localizedDescription, privacy: .private)")
-        }
+        let stoppedEarly = stopRequested || Task.isCancelled
+        let outcome: CollectionOutcome = !identified ? .failed : (succeeded && !stoppedEarly ? .complete : .partial)
+        let manifest = CollectionManifest(applicationVersion: ToolkitVersion.current, targetUDID: target.udid, targetName: target.name, targetModel: device.marketingName ?? device.productType, targetOSVersion: device.osVersion, targetBuild: device.buildVersion, options: options, startedAt: started, finishedAt: Date(), outcome: outcome, stoppedEarly: stoppedEarly, steps: steps)
+        try Self.finalize(manifest: manifest, device: device, caseFolder: caseFolder)
         logger.info("Evidence collection finished: \(outcome.rawValue, privacy: .public)")
         return manifest
+    }
+
+    /// Publishes the manifest last, after its device record and checksums are durable.
+    /// The checksum entry for the manifest uses its final encoded bytes before publication,
+    /// so checksum failure cannot leave an on-disk manifest claiming completed collection.
+    static func finalize(manifest: CollectionManifest, device: Device, caseFolder: URL) throws {
+        var artifact = "snapshots/device-record.json"
+        do {
+            for path in [artifact, "SHA256SUMS", CaseWorkflow.manifestFileName] where FileManager.default.fileExists(atPath: caseFolder.appendingPathComponent(path).path) {
+                artifact = path
+                throw ToolkitError.fileSystem("A required case artifact already exists; existing files are never overwritten.", path: caseFolder.appendingPathComponent(path).path)
+            }
+            try SecureFileIO.writeNewFile(try JSONOutput.encode(device), to: caseFolder.appendingPathComponent(artifact))
+            artifact = CaseWorkflow.manifestFileName
+            let manifestData = try JSONOutput.encode(manifest)
+            artifact = "SHA256SUMS"
+            let checksums = try HashManifest.contents(for: caseFolder, fileName: artifact, additionalFiles: [CaseWorkflow.manifestFileName: manifestData])
+            try SecureFileIO.writeNewFile(checksums, to: caseFolder.appendingPathComponent(artifact))
+            artifact = CaseWorkflow.manifestFileName
+            try SecureFileIO.writeNewFile(manifestData, to: caseFolder.appendingPathComponent(artifact))
+        } catch {
+            throw ToolkitError(
+                .fileSystem,
+                message: "The evidence case is incomplete because \(artifact) could not be finalized.",
+                recovery: "Retain the partial files at \(caseFolder.path). Create a new case in a writable location before collecting again.",
+                technicalDetail: "Acquisition outcome: \(manifest.outcome.rawValue). Stopped early: \(manifest.stoppedEarly).\nFailed artifact: \(artifact).\nPartial case: \(caseFolder.path).\nCause: \(String(describing: error))"
+            )
+        }
     }
 
     // MARK: Snapshots

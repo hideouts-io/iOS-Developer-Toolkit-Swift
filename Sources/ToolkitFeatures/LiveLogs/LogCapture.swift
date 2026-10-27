@@ -356,25 +356,129 @@ public enum HashManifest {
 
     @discardableResult
     public static func write(for folder: URL, fileName: String = HashManifest.fileName) throws -> URL {
+        try validateHashPath(fileName, under: folder)
+        guard !fileName.contains("/") else {
+            throw ToolkitError.fileSystem("The checksum list name must be a filename within its folder.", path: fileName)
+        }
         let manifest = folder.appendingPathComponent(fileName)
-        let lines = try SecureFileIO.regularFiles(under: folder)
-            .filter { $0.relativePath != fileName }
-            .map { "\(try SecureFileIO.sha256(of: $0.url))  \($0.relativePath)" }
-        try SecureFileIO.writeAtomically(Data((lines.joined(separator: "\n") + "\n").utf8), to: manifest)
+        try SecureFileIO.writeAtomically(try contents(for: folder, fileName: fileName, additionalFiles: [:]), to: manifest)
         return manifest
     }
 
-    /// Verifies a manifest; returns the relative paths that do not match.
-    public static func verify(folder: URL, fileName: String = HashManifest.fileName) throws -> [String] {
-        let text = try String(contentsOf: folder.appendingPathComponent(fileName), encoding: .utf8)
-        var mismatches: [String] = []
-        for line in text.split(separator: "\n") {
-            let parts = line.split(separator: " ", maxSplits: 1)
-            guard parts.count == 2 else { continue }
-            let path = parts[1].trimmingCharacters(in: .whitespaces)
-            let url = try SecureFileIO.safeChild(of: folder, relativePath: path)
-            if (try? SecureFileIO.sha256(of: url)) != String(parts[0]) { mismatches.append(path) }
+    /// Encodes hashes including final metadata bytes that the caller has not published yet.
+    /// Callers remain responsible for persisting those exact bytes under the supplied names.
+    static func contents(for folder: URL, fileName: String, additionalFiles: [String: Data]) throws -> Data {
+        try validateHashPath(fileName, under: folder)
+        let hashes = try filesRequiringCompleteCoverage(under: folder)
+            .filter { $0.relativePath != fileName && additionalFiles[$0.relativePath] == nil }
+            .map { (path: $0.relativePath, hash: try SecureFileIO.sha256(of: $0.url)) }
+        for path in additionalFiles.keys { try validateHashPath(path, under: folder) }
+        let additionalHashes = additionalFiles.map { (path: $0.key, hash: SecureFileIO.sha256(of: $0.value)) }
+        let lines = (hashes + additionalHashes).sorted { $0.path < $1.path }.map { "\($0.hash)  \($0.path)" }
+        return Data((lines.joined(separator: "\n") + "\n").utf8)
+    }
+
+    /// A checksum list must not silently omit unreadable folders, links, or special files.
+    fileprivate static func filesRequiringCompleteCoverage(under folder: URL) throws -> [(relativePath: String, url: URL)] {
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey]
+        let rootValues: URLResourceValues
+        do {
+            rootValues = try folder.resourceValues(forKeys: keys)
+        } catch {
+            throw ToolkitError.fileSystem("Could not inspect the folder for checksums.", path: folder.path, underlying: error)
         }
-        return mismatches
+        guard rootValues.isDirectory == true, rootValues.isSymbolicLink == false else {
+            throw ToolkitError.fileSystem("Checksums require a regular folder, without a symbolic link.", path: folder.path)
+        }
+        let enumerationFailure = LockedValue<ToolkitError?>(nil)
+        guard let enumerator = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: Array(keys), options: [], errorHandler: { url, error in
+            enumerationFailure.withLock { $0 = ToolkitError.fileSystem("Could not enumerate every case file for checksums.", path: url.path, underlying: error) }
+            return false
+        }) else {
+            throw ToolkitError.fileSystem("Could not enumerate the folder for checksums.", path: folder.path)
+        }
+        let rootPath = folder.standardizedFileURL.path
+        var files: [(relativePath: String, url: URL)] = []
+        for item in enumerator {
+            if let failure = enumerationFailure.current { throw failure }
+            guard let url = item as? URL else {
+                throw ToolkitError(.internalInconsistency, message: "The filesystem returned an unexpected checksum entry.")
+            }
+            let values: URLResourceValues
+            do {
+                values = try url.resourceValues(forKeys: keys)
+            } catch {
+                throw ToolkitError.fileSystem("Could not inspect a case entry for checksums.", path: url.path, underlying: error)
+            }
+            guard values.isSymbolicLink == false else {
+                throw ToolkitError.fileSystem("A symbolic link cannot be included in case checksum coverage.", path: url.path)
+            }
+            if values.isDirectory == true { continue }
+            guard values.isRegularFile == true else {
+                throw ToolkitError.fileSystem("A case entry is not a regular file and cannot be hashed.", path: url.path)
+            }
+            let path = url.standardizedFileURL.path
+            guard path.hasPrefix(rootPath + "/") else {
+                throw ToolkitError.fileSystem("A checksum entry would escape its folder.", path: url.path)
+            }
+            let relativePath = String(path.dropFirst(rootPath.count + 1))
+            try validateHashPath(relativePath, under: folder)
+            files.append((relativePath: relativePath, url: url))
+        }
+        if let failure = enumerationFailure.current { throw failure }
+        return files.sorted { $0.relativePath < $1.relativePath }
+    }
+
+    private static func validateHashPath(_ path: String, under folder: URL) throws {
+        _ = try SecureFileIO.safeChild(of: folder, relativePath: path)
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard !path.contains("\n"), !path.contains("\r"), path == path.trimmingCharacters(in: .whitespacesAndNewlines),
+              !components.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else {
+            throw ToolkitError.fileSystem("A case filename cannot be represented safely in the checksum list.", path: path)
+        }
+    }
+
+    /// Rejects invalid lists and returns paths with missing, changed, or unlisted files.
+    public static func verify(folder: URL, fileName: String = HashManifest.fileName) throws -> [String] {
+        try validateHashPath(fileName, under: folder)
+        let files = try filesRequiringCompleteCoverage(under: folder)
+        guard let manifest = files.first(where: { $0.relativePath == fileName }) else {
+            throw ToolkitError.fileSystem("The checksum list is missing or is not a regular file.", path: folder.appendingPathComponent(fileName).path)
+        }
+        let text = try String(contentsOf: manifest.url, encoding: .utf8)
+        guard !text.isEmpty else {
+            throw ToolkitError.fileSystem("The checksum list is empty.", path: manifest.url.path)
+        }
+        if text == "\n" {
+            return files.filter { $0.relativePath != fileName }.map(\.relativePath)
+        }
+        var listed: [String: String] = [:]
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false).dropLast(text.hasSuffix("\n") ? 1 : 0) {
+            let hash = line.prefix(64)
+            let suffix = line.dropFirst(min(64, line.count))
+            guard hash.count == 64, hash.allSatisfy({ ("0"..."9").contains($0) || ("a"..."f").contains($0) }), suffix.hasPrefix("  ") else {
+                throw ToolkitError.fileSystem("The checksum list contains a malformed entry.", path: manifest.url.path)
+            }
+            let path = String(suffix.dropFirst(2))
+            try validateHashPath(path, under: folder)
+            guard path != fileName, listed.updateValue(String(hash), forKey: path) == nil else {
+                throw ToolkitError.fileSystem("The checksum list contains a duplicate or self-referential entry.", path: manifest.url.path)
+            }
+        }
+        guard !listed.isEmpty else {
+            throw ToolkitError.fileSystem("The checksum list contains no file entries.", path: manifest.url.path)
+        }
+        var mismatches: [String] = []
+        let actualFiles = files.filter { $0.relativePath != fileName }
+        let actualPaths = Set(actualFiles.map(\.relativePath))
+        for file in actualFiles {
+            if let hash = listed[file.relativePath] {
+                if (try? SecureFileIO.sha256(of: file.url)) != hash { mismatches.append(file.relativePath) }
+            } else {
+                mismatches.append(file.relativePath)
+            }
+        }
+        mismatches.append(contentsOf: listed.keys.filter { !actualPaths.contains($0) })
+        return mismatches.sorted()
     }
 }

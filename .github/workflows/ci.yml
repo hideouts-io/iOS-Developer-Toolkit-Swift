@@ -38,34 +38,14 @@ jobs:
       - name: Test
         if: github.event_name != 'workflow_dispatch'
         run: swift test -Xswiftc -warnings-as-errors
-      - name: Diagnose package test stall
+      - name: Diagnose full suite without package preparation tests
         if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           set -euo pipefail
-          cases=(
-            unsignedSimulatorBundleHasAnImmutablePrivateCopyAndDistinctRouteValidation
-            bundleReplacementAtEitherLocationRequiresNewInspection
-            bundleAddedFilesAndExecutablePermissionChangesAreDetected
-            physicalAppRequiresCoreDeviceAndAnIntactSignature
-            unsignedIPAStaysInspectableButCannotAuthorizeInstallation
-            signedIPAUsesTheApprovedCopyAndRetainsNativePhysicalInstallation
-            rejectsMalformedPackagesAndTypedBundleMetadata
-            preservesSafeInternalFrameworkLinksWithoutFollowingThem
-            deniesEscapingAbsoluteBrokenAndCyclicBundleLinks
-            rootSymbolicLinksAreDeniedAndCleanupDoesNotDeleteSource
-          )
-          for case_name in "${cases[@]}"; do
-            echo "DIAGNOSTIC_START: AppPackagePreparationTests/$case_name"
-            swift test -Xswiftc -warnings-as-errors --filter "AppPackagePreparationTests/$case_name" --quiet
-            echo "DIAGNOSTIC_PASS: AppPackagePreparationTests/$case_name"
-          done
-          echo 'DIAGNOSTIC_START: AppPackagePreparationTests suite'
-          swift test -Xswiftc -warnings-as-errors --filter AppPackagePreparationTests --quiet
-          echo 'DIAGNOSTIC_PASS: AppPackagePreparationTests suite'
-          echo 'DIAGNOSTIC_START: full Swift package suite'
-          swift test -Xswiftc -warnings-as-errors
-          echo 'DIAGNOSTIC_PASS: full Swift package suite'
+          echo 'DIAGNOSTIC_START: full package suite excluding AppPackagePreparationTests'
+          swift test -Xswiftc -warnings-as-errors --skip AppPackagePreparationTests
+          echo 'DIAGNOSTIC_PASS: full package suite excluding AppPackagePreparationTests'
       - name: Command-line tool smoke test
         run: |
           swift run idt --version

@@ -36,7 +36,36 @@ jobs:
       - name: Build with warnings as errors
         run: swift build --build-tests -Xswiftc -warnings-as-errors
       - name: Test
+        if: github.event_name != 'workflow_dispatch'
         run: swift test -Xswiftc -warnings-as-errors
+      - name: Diagnose package test stall
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cases=(
+            unsignedSimulatorBundleHasAnImmutablePrivateCopyAndDistinctRouteValidation
+            bundleReplacementAtEitherLocationRequiresNewInspection
+            bundleAddedFilesAndExecutablePermissionChangesAreDetected
+            physicalAppRequiresCoreDeviceAndAnIntactSignature
+            unsignedIPAStaysInspectableButCannotAuthorizeInstallation
+            signedIPAUsesTheApprovedCopyAndRetainsNativePhysicalInstallation
+            rejectsMalformedPackagesAndTypedBundleMetadata
+            preservesSafeInternalFrameworkLinksWithoutFollowingThem
+            deniesEscapingAbsoluteBrokenAndCyclicBundleLinks
+            rootSymbolicLinksAreDeniedAndCleanupDoesNotDeleteSource
+          )
+          for case_name in "${cases[@]}"; do
+            echo "DIAGNOSTIC_START: AppPackagePreparationTests/$case_name"
+            swift test -Xswiftc -warnings-as-errors --filter "AppPackagePreparationTests/$case_name" --quiet
+            echo "DIAGNOSTIC_PASS: AppPackagePreparationTests/$case_name"
+          done
+          echo 'DIAGNOSTIC_START: AppPackagePreparationTests suite'
+          swift test -Xswiftc -warnings-as-errors --filter AppPackagePreparationTests --quiet
+          echo 'DIAGNOSTIC_PASS: AppPackagePreparationTests suite'
+          echo 'DIAGNOSTIC_START: full Swift package suite'
+          swift test -Xswiftc -warnings-as-errors
+          echo 'DIAGNOSTIC_PASS: full Swift package suite'
       - name: Command-line tool smoke test
         run: |
           swift run idt --version
@@ -55,6 +84,7 @@ jobs:
 
   app:
     name: App build, UI tests, and layout
+    if: github.event_name != 'workflow_dispatch'
     runs-on: macos-26
     timeout-minutes: 45
     steps:
@@ -103,6 +133,7 @@ jobs:
 
   simulator:
     name: Real simulator end-to-end test
+    if: github.event_name != 'workflow_dispatch'
     runs-on: macos-26
     timeout-minutes: 45
     steps:
@@ -122,6 +153,7 @@ jobs:
 
   release-build:
     name: Release packaging
+    if: github.event_name != 'workflow_dispatch'
     runs-on: macos-26
     timeout-minutes: 90
     steps:

@@ -108,7 +108,7 @@ struct Collect: AsyncParsableCommand {
             let options = CollectionOptions(durationSeconds: duration, includeClassicSyslog: includeSyslog, includeUnifiedLogs: includeUnifiedLogs, includePacketCapture: includePcap, includeScreenshot: includeScreenshot, includeCrashReports: includeCrashPull, includeOSLogArchive: includeOSLogArchive, includeDVTLogging: includeDVTLogs || includeOSLog)
             let collector = try EvidenceCollector(device: device, caseFolder: folder, options: options)
             print("Collecting from \(device.name) into \(folder.path)")
-            let manifest = await collector.run { event in
+            let manifest = try await collector.run { event in
                 switch event {
                 case .stepFinished(let step): print("  [\(step.status.rawValue)] \(step.title)\(step.detail.isEmpty ? "" : " — \(step.detail)")")
                 case .streaming(let remaining) where remaining % 10 == 0: print("  streaming… \(remaining)s left")

@@ -318,7 +318,7 @@ final class EvidenceModel {
             self.collector = nil
         }
         let result = await app.run("Evidence collection", workspace: .evidence, target: target, transport: "Native services + CoreDevice", outputPaths: [folder.path]) { [weak self] _ in
-            await collector.run { event in
+            try await collector.run { event in
                 Task { @MainActor in
                     switch event {
                     case .stepStarted(let title): self?.currentStep = title
@@ -332,9 +332,7 @@ final class EvidenceModel {
         manifest = result
         activeCase = nil
         activeIntake = nil
-        if let result {
-            app.statusMessage = "Evidence case \(result.outcome == .complete ? "completed" : result.outcome == .partial ? "finished with coverage gaps" : "could not identify the device")."
-        }
+        if result?.outcome == .complete { app.statusMessage = "Evidence case completed." }
         lastCaseFolder = folder
     }
 

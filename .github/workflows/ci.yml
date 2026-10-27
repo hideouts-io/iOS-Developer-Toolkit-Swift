@@ -38,14 +38,14 @@ jobs:
       - name: Test
         if: github.event_name != 'workflow_dispatch'
         run: swift test -Xswiftc -warnings-as-errors
-      - name: Diagnose full suite without package preparation tests
+      - name: Diagnose package preparation with IPA inspection
         if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           set -euo pipefail
-          echo 'DIAGNOSTIC_START: full package suite excluding AppPackagePreparationTests'
-          swift test -Xswiftc -warnings-as-errors --skip AppPackagePreparationTests
-          echo 'DIAGNOSTIC_PASS: full package suite excluding AppPackagePreparationTests'
+          echo 'DIAGNOSTIC_START: package preparation and IPA inspection suites'
+          swift test -Xswiftc -warnings-as-errors --filter 'AppPackagePreparationTests|IPAInspectorTests'
+          echo 'DIAGNOSTIC_PASS: package preparation and IPA inspection suites'
       - name: Command-line tool smoke test
         run: |
           swift run idt --version

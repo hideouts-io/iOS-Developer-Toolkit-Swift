@@ -58,7 +58,7 @@ jobs:
               echo "DIAGNOSTIC_SAMPLE_PID=$pid"
               sample "$pid" 5 -file "$RUNNER_TEMP/swiftpm-testing-$pid.sample" >/dev/null 2>&1 || echo 'DIAGNOSTIC_SAMPLE_FAILED'
               if test -f "$RUNNER_TEMP/swiftpm-testing-$pid.sample"; then
-                grep -nE 'Call graph:|Thread |SecStaticCode|SecCode|ProcessCommandRunner|swiftpm-testing|mach_msg|semaphore_wait|dispatch_group_wait|wait4' "$RUNNER_TEMP/swiftpm-testing-$pid.sample" | head -n 120 || true
+                sed -n '24,190p' "$RUNNER_TEMP/swiftpm-testing-$pid.sample"
               fi
             done
             kill -TERM "$test_pid" 2>/dev/null || true

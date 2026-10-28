@@ -38,14 +38,14 @@ jobs:
       - name: Test
         if: github.event_name != 'workflow_dispatch'
         run: swift test -Xswiftc -warnings-as-errors
-      - name: Diagnose paired package and IPA test stall
+      - name: Diagnose full parallel package test stall
         if: github.event_name == 'workflow_dispatch'
         shell: bash
         timeout-minutes: 5
         run: |
           set -euo pipefail
-          echo 'DIAGNOSTIC_START: package preparation and IPA inspection suites'
-          swift test -Xswiftc -warnings-as-errors --filter 'AppPackagePreparationTests|IPAInspectorTests' &
+          echo 'DIAGNOSTIC_START: full parallel package suite'
+          swift test -Xswiftc -warnings-as-errors &
           test_pid=$!
           (
             for _ in {1..24}; do
@@ -66,10 +66,10 @@ jobs:
           monitor_pid=$!
           if wait "$test_pid"; then
             wait "$monitor_pid" || true
-            echo 'DIAGNOSTIC_PASS: paired suites completed'
+            echo 'DIAGNOSTIC_PASS: full parallel suite completed'
           else
             wait "$monitor_pid" || true
-            echo 'DIAGNOSTIC_FAIL: paired suites did not complete' >&2
+            echo 'DIAGNOSTIC_FAIL: full parallel suite did not complete' >&2
             exit 1
           fi
       - name: Command-line tool smoke test

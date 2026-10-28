@@ -38,14 +38,40 @@ jobs:
       - name: Test
         if: github.event_name != 'workflow_dispatch'
         run: swift test -Xswiftc -warnings-as-errors
-      - name: Diagnose full package suite serially
+      - name: Diagnose paired package and IPA test stall
         if: github.event_name == 'workflow_dispatch'
         shell: bash
+        timeout-minutes: 5
         run: |
           set -euo pipefail
-          echo 'DIAGNOSTIC_START: full package suite with explicit serial execution'
-          swift test --no-parallel -Xswiftc -warnings-as-errors
-          echo 'DIAGNOSTIC_PASS: full package suite with explicit serial execution'
+          echo 'DIAGNOSTIC_START: package preparation and IPA inspection suites'
+          swift test -Xswiftc -warnings-as-errors --filter 'AppPackagePreparationTests|IPAInspectorTests' &
+          test_pid=$!
+          (
+            for _ in {1..24}; do
+              sleep 5
+              kill -0 "$test_pid" 2>/dev/null || exit 0
+            done
+            echo 'DIAGNOSTIC_STILL_RUNNING: process tree and test-runner sample'
+            ps -axo pid,ppid,state,etime,comm | awk '$5 ~ /swift|codesign|security/ { print }'
+            for pid in $(pgrep -x swiftpm-testing || true); do
+              echo "DIAGNOSTIC_SAMPLE_PID=$pid"
+              sample "$pid" 5 -file "$RUNNER_TEMP/swiftpm-testing-$pid.sample" >/dev/null 2>&1 || echo 'DIAGNOSTIC_SAMPLE_FAILED'
+              if test -f "$RUNNER_TEMP/swiftpm-testing-$pid.sample"; then
+                grep -nE 'Call graph:|Thread |SecStaticCode|SecCode|ProcessCommandRunner|swiftpm-testing|mach_msg|semaphore_wait|dispatch_group_wait|wait4' "$RUNNER_TEMP/swiftpm-testing-$pid.sample" | head -n 120 || true
+              fi
+            done
+            kill -TERM "$test_pid" 2>/dev/null || true
+          ) &
+          monitor_pid=$!
+          if wait "$test_pid"; then
+            wait "$monitor_pid" || true
+            echo 'DIAGNOSTIC_PASS: paired suites completed'
+          else
+            wait "$monitor_pid" || true
+            echo 'DIAGNOSTIC_FAIL: paired suites did not complete' >&2
+            exit 1
+          fi
       - name: Command-line tool smoke test
         run: |
           swift run idt --version

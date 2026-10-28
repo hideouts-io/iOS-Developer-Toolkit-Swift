@@ -54,7 +54,7 @@ jobs:
             done
             echo 'DIAGNOSTIC_STILL_RUNNING: process tree and test-runner sample'
             ps -axo pid,ppid,state,etime,comm | awk '$5 ~ /swift|codesign|security/ { print }'
-            for pid in $(pgrep -x swiftpm-testing || true); do
+            for pid in $(ps -axo pid=,ppid=,comm= | awk -v parent="$test_pid" '$2 == parent && $3 ~ /swiftpm-testing-helper$/ { print $1 }'); do
               echo "DIAGNOSTIC_SAMPLE_PID=$pid"
               sample "$pid" 5 -file "$RUNNER_TEMP/swiftpm-testing-$pid.sample" >/dev/null 2>&1 || echo 'DIAGNOSTIC_SAMPLE_FAILED'
               if test -f "$RUNNER_TEMP/swiftpm-testing-$pid.sample"; then

@@ -176,10 +176,7 @@ final class InstallModel {
             resumeCleanupIfIdle()
         }
         let result = await app.run("Inspect \(url.lastPathComponent)", workspace: .installApp, target: nil, transport: "Local inspection (Security.framework)", outputPaths: [url.path], onStart: { self.inspectionOperation = $0 }) { _ in
-            let preparation = Task.detached(priority: .userInitiated) { try PreparedAppPackage.prepare(url) }
-            return try await withTaskCancellationHandler {
-                try await preparation.value
-            } onCancel: { preparation.cancel() }
+            try await PreparedAppPackage.prepareAsync(url)
         }
         guard selectionID == generation else {
             if let result {

@@ -68,8 +68,17 @@ public struct IPAInspection: Sendable, Hashable, Codable {
 
 /// Inspects an `.ipa` package locally before any installation is offered.
 public enum IPAInspector {
+    /// Suspends the caller while blocking archive and native signature checks finish. Cancellation
+    /// waits for native validation and scratch cleanup before it is reported.
+    public static func inspectAsync(_ url: URL) async throws -> IPAInspection {
+        let inspection = try await PackageInspectionExecutor.run { _ in try inspect(url) }
+        try Task.checkCancellation()
+        return inspection
+    }
+
     public static let maximumInfoPlistBytes: UInt64 = 10 * 1024 * 1024
 
+    /// Blocking entry point for synchronous callers. Swift tasks should use `inspectAsync`.
     public static func inspect(_ url: URL) throws -> IPAInspection {
         guard url.pathExtension.lowercased() == "ipa" else {
             throw ToolkitError.invalidInput("Choose an .ipa package.")

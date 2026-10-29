@@ -21,19 +21,40 @@ public struct PreparedAppPackage: Sendable {
     private let directoryInode: ino_t
     private static let maximumBytes = ZipArchive.maximumTotalUncompressedBytes
 
+    /// Suspends during blocking package and signature work. A cancelled caller keeps ownership
+    /// until native validation finishes, then removes its private copy before receiving cancellation.
+    public static func prepareAsync(_ source: URL) async throws -> PreparedAppPackage {
+        let package = try await PackageInspectionExecutor.run { checkCancellation in
+            try prepare(source, checkCancellation: checkCancellation)
+        }
+        guard !Task.isCancelled else {
+            do { try package.remove() }
+            catch {
+                throw ToolkitError.fileSystem("Package inspection was stopped, but its private copy could not be removed.", path: package.directory.path, underlying: error)
+            }
+            throw CancellationError()
+        }
+        return package
+    }
+
+    /// Blocking entry point for synchronous callers. Swift tasks should use `prepareAsync`.
     public static func prepare(_ source: URL) throws -> PreparedAppPackage {
-        try Task.checkCancellation()
+        try prepare(source, checkCancellation: { try Task.checkCancellation() })
+    }
+
+    private static func prepare(_ source: URL, checkCancellation: PackageInspectionExecutor.CancellationCheck) throws -> PreparedAppPackage {
+        try checkCancellation()
         guard source.isFileURL, ["ipa", "app"].contains(source.pathExtension.lowercased()) else {
             throw ToolkitError.invalidInput("Choose an .ipa package or an iOS .app bundle.")
         }
         let original = source.standardizedFileURL
-        let identity = try packageIdentity(original)
+        let identity = try packageIdentity(original, checkCancellation: checkCancellation)
         let directory = try SecureFileIO.makeTemporaryDirectory(prefix: "idt-prepared-app")
         let copy = directory.appendingPathComponent(original.lastPathComponent)
         do {
             try FileManager.default.copyItem(at: original, to: copy)
-            try Task.checkCancellation()
-            guard try packageIdentity(original) == identity, try packageIdentity(copy) == identity else {
+            try checkCancellation()
+            guard try packageIdentity(original, checkCancellation: checkCancellation) == identity, try packageIdentity(copy, checkCancellation: checkCancellation) == identity else {
                 throw ToolkitError(.invalidInput, message: "The package changed while it was being prepared.", recovery: "Choose the package again after its build or copy has finished.", technicalDetail: original.path)
             }
             let inspection: IPAInspection?
@@ -47,13 +68,13 @@ public struct PreparedAppPackage: Sendable {
                 platforms = try validatedPlatforms(inspected.supportedPlatforms)
                 signature = inspected.signature
             } else {
-                let info = try bundleInfo(copy)
+                let info = try bundleInfo(copy, checkCancellation: checkCancellation)
                 inspection = nil
                 appName = info.name
                 platforms = info.platforms
                 signature = CodeSignatureInspector.inspect(bundle: copy)
             }
-            guard try packageIdentity(copy) == identity, try packageIdentity(original) == identity else {
+            guard try packageIdentity(copy, checkCancellation: checkCancellation) == identity, try packageIdentity(original, checkCancellation: checkCancellation) == identity else {
                 throw ToolkitError(.invalidInput, message: "The package changed during inspection.", recovery: "Choose the completed package again.", technicalDetail: original.path)
             }
             let ownership = try metadata(directory)
@@ -129,9 +150,9 @@ public struct PreparedAppPackage: Sendable {
         return values
     }
 
-    private static func bundleInfo(_ bundle: URL) throws -> (name: String, platforms: [String]) {
+    private static func bundleInfo(_ bundle: URL, checkCancellation: PackageInspectionExecutor.CancellationCheck) throws -> (name: String, platforms: [String]) {
         let descriptor = try openChild(root: bundle, relativePath: "Info.plist")
-        let data = try readFile(descriptor, maximumBytes: IPAInspector.maximumInfoPlistBytes)
+        let data = try readFile(descriptor, maximumBytes: IPAInspector.maximumInfoPlistBytes, checkCancellation: checkCancellation)
         let info = try PlistValue.decode(data)
         guard info.dictionaryValue != nil else { throw ToolkitError.invalidInput("The app's Info.plist is not a dictionary.") }
         func required(_ key: String) throws -> String {
@@ -172,13 +193,17 @@ public struct PreparedAppPackage: Sendable {
     }
 
     private static func packageIdentity(_ url: URL) throws -> String {
-        try Task.checkCancellation()
+        try packageIdentity(url, checkCancellation: { try Task.checkCancellation() })
+    }
+
+    private static func packageIdentity(_ url: URL, checkCancellation: PackageInspectionExecutor.CancellationCheck) throws -> String {
+        try checkCancellation()
         let info = try metadata(url)
         if url.pathExtension.lowercased() == "ipa" {
             guard info.st_mode & S_IFMT == S_IFREG else { throw ToolkitError.invalidInput("The IPA package must be a regular file, not a symbolic link.") }
             let descriptor = open(url.path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
             guard descriptor >= 0 else { throw fileError("Could not open the IPA package safely.", url: url) }
-            return try hashFile(descriptor, url: url, maximumBytes: maximumBytes).hash
+            return try hashFile(descriptor, url: url, maximumBytes: maximumBytes, checkCancellation: checkCancellation).hash
         }
         guard info.st_mode & S_IFMT == S_IFDIR else { throw ToolkitError.invalidInput("The app bundle must be a directory, not a symbolic link.") }
         let root = url.resolvingSymlinksInPath()
@@ -192,7 +217,7 @@ public struct PreparedAppPackage: Sendable {
         var entries = [TreeEntry(path: "", kind: "directory", permissions: info.st_mode & 0o7777, hash: nil, link: nil)]
         var totalBytes: UInt64 = 0
         for case let enumeratedURL as URL in enumerator {
-            try Task.checkCancellation()
+            try checkCancellation()
             guard entries.count < ZipArchive.maximumEntries else { throw ToolkitError.invalidInput("The app bundle exceeds the package file-count limit.") }
             // FileManager may return /var URLs for a canonical /private/var root. Resolve only
             // the parent so a leaf symbolic link remains visible to lstat and the identity.
@@ -204,7 +229,7 @@ public struct PreparedAppPackage: Sendable {
             switch kind {
             case S_IFREG:
                 let descriptor = try openChild(root: root, relativePath: relativePath)
-                let file = try hashFile(descriptor, url: child, maximumBytes: maximumBytes - totalBytes)
+                let file = try hashFile(descriptor, url: child, maximumBytes: maximumBytes - totalBytes, checkCancellation: checkCancellation)
                 totalBytes += file.bytes
                 entries.append(TreeEntry(path: relativePath, kind: "file", permissions: fileMetadata.st_mode & 0o7777, hash: file.hash, link: nil))
             case S_IFDIR:
@@ -271,7 +296,7 @@ public struct PreparedAppPackage: Sendable {
         guard close(descriptor) == 0 else { throw fileError("Could not close an app-bundle descriptor.", url: root) }
     }
 
-    private static func hashFile(_ descriptor: Int32, url: URL, maximumBytes: UInt64) throws -> (hash: String, bytes: UInt64) {
+    private static func hashFile(_ descriptor: Int32, url: URL, maximumBytes: UInt64, checkCancellation: PackageInspectionExecutor.CancellationCheck) throws -> (hash: String, bytes: UInt64) {
         try withFileHandle(descriptor) { handle in
             var info = stat()
             guard fstat(descriptor, &info) == 0 else { throw fileError("Could not inspect the package file.", url: url) }
@@ -281,7 +306,7 @@ public struct PreparedAppPackage: Sendable {
             var hasher = SHA256()
             var bytes: UInt64 = 0
             while let data = try handle.read(upToCount: 1 << 20), !data.isEmpty {
-                try Task.checkCancellation()
+                try checkCancellation()
                 guard UInt64(data.count) <= maximumBytes - bytes else { throw ToolkitError.invalidInput("The package changed size or exceeds the package preparation limit.") }
                 bytes += UInt64(data.count)
                 hasher.update(data: data)
@@ -290,7 +315,7 @@ public struct PreparedAppPackage: Sendable {
         }
     }
 
-    private static func readFile(_ descriptor: Int32, maximumBytes: UInt64) throws -> Data {
+    private static func readFile(_ descriptor: Int32, maximumBytes: UInt64, checkCancellation: PackageInspectionExecutor.CancellationCheck) throws -> Data {
         try withFileHandle(descriptor) { handle in
             var info = stat()
             guard fstat(descriptor, &info) == 0 else {
@@ -301,7 +326,7 @@ public struct PreparedAppPackage: Sendable {
             }
             var data = Data()
             while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty {
-                try Task.checkCancellation()
+                try checkCancellation()
                 guard UInt64(chunk.count) <= maximumBytes - UInt64(data.count) else {
                     throw ToolkitError.invalidInput("The app's Info.plist exceeds the 10 MB inspection limit.")
                 }

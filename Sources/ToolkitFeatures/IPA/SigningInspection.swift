@@ -1,3 +1,4 @@
+import Dispatch
 import Foundation
 import Security
 import ToolkitCore
@@ -161,6 +162,34 @@ public enum CodeSignatureInspector {
         default:
             let message = errors.map { CFErrorCopyDescription($0.takeRetainedValue()) as String } ?? "OSStatus \(status)"
             return CodeSignatureSummary(status: .invalid, identifier: identifier, teamIdentifier: team, authorities: authorities, detail: message)
+        }
+    }
+}
+
+/// Security.framework can wait for Dispatch work while validating nested code. Keep package
+/// inspection off Swift's cooperative executor and retain its worker until native work finishes.
+enum PackageInspectionExecutor {
+    typealias CancellationCheck = @Sendable () throws -> Void
+
+    private static let queue = DispatchQueue(label: "io.hideouts.package-inspection", qos: .userInitiated)
+
+    static func run<Value: Sendable>(_ operation: @escaping @Sendable (CancellationCheck) throws -> Value) async throws -> Value {
+        let cancelled = LockedValue(false)
+        let checkCancellation: CancellationCheck = {
+            if cancelled.current { throw CancellationError() }
+        }
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                queue.async {
+                    continuation.resume(with: Result {
+                        try checkCancellation()
+                        return try operation(checkCancellation)
+                    })
+                }
+            }
+        } onCancel: {
+            cancelled.withLock { $0 = true }
         }
     }
 }

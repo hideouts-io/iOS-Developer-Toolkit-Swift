@@ -134,7 +134,7 @@ struct InspectIPA: AsyncParsableCommand {
 
     func run() async throws {
         do {
-            let inspection = try IPAInspector.inspect(URL(fileURLWithPath: (path as NSString).expandingTildeInPath))
+            let inspection = try await IPAInspector.inspectAsync(URL(fileURLWithPath: (path as NSString).expandingTildeInPath))
             if json {
                 FileHandle.standardOutput.write(try JSONOutput.encode(inspection))
             } else {

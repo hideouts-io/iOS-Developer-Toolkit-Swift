@@ -30,6 +30,29 @@ struct AppPackagePreparationTests {
         #expect(try Data(contentsOf: app.appendingPathComponent("Info.plist")) == originalInfo)
     }
 
+    @Test func cancelledAsyncPreparationDoesNotReturnAnOwnedPackage() async throws {
+        let root = try SecureFileIO.makeTemporaryDirectory(prefix: "prepared-cancelled")
+        defer { removeTestItem(root) }
+        let app = try makeApp(root, name: "Demo", platform: "iPhoneSimulator")
+        let observedCancellation = try await withThrowingTaskGroup(of: Bool.self) { group in
+            group.cancelAll()
+            group.addTask {
+                do {
+                    let package = try await PreparedAppPackage.prepareAsync(app)
+                    try package.remove()
+                    return false
+                } catch is CancellationError {
+                    return true
+                }
+            }
+            var cancelled = false
+            for try await result in group { cancelled = result }
+            return cancelled
+        }
+        #expect(observedCancellation)
+        #expect(FileManager.default.fileExists(atPath: app.appendingPathComponent("Demo").path))
+    }
+
     private enum ChangedLocation: String, CaseIterable {
         case original, prepared
     }
@@ -67,11 +90,11 @@ struct AppPackagePreparationTests {
         let root = try SecureFileIO.makeTemporaryDirectory(prefix: "prepared-physical")
         defer { removeTestItem(root) }
         let app = try makeApp(root, name: "DeviceDemo", platform: "iPhoneOS")
-        let unsigned = try PreparedAppPackage.prepare(app)
+        let unsigned = try await PreparedAppPackage.prepareAsync(app)
         defer { removeTestPackage(unsigned) }
         #expect(throws: ToolkitError.self) { try unsigned.validate(for: target(.physical), supportsCoreDevice: true, simulatorBooted: true) }
         try await sign(app, in: root)
-        let signed = try PreparedAppPackage.prepare(app)
+        let signed = try await PreparedAppPackage.prepareAsync(app)
         defer { removeTestPackage(signed) }
         #expect(signed.signature?.status == .valid)
         try signed.validate(for: target(.physical), supportsCoreDevice: true, simulatorBooted: false)
@@ -107,8 +130,10 @@ struct AppPackagePreparationTests {
         let app = try makeApp(root, name: "Demo", platform: "iPhoneOS")
         try await sign(app, in: root)
         let ipa = try makeIPA(app, in: root, name: "Signed.ipa")
-        let prepared = try PreparedAppPackage.prepare(ipa)
+        async let inspection = IPAInspector.inspectAsync(ipa)
+        let prepared = try await PreparedAppPackage.prepareAsync(ipa)
         defer { removeTestPackage(prepared) }
+        #expect(try await inspection.isInstallable)
         #expect(prepared.inspection?.isInstallable == true)
         try prepared.revalidate()
         try prepared.validate(for: target(.physical), supportsCoreDevice: false, simulatorBooted: false)

@@ -53,6 +53,8 @@ struct IOSDeveloperToolkitApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var model: AppModel?
+    private var terminationRequestID: UUID?
+    private var terminationDeadlineTask: Task<Void, Never>?
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         MainActor.assumeIsolated {
@@ -65,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         MainActor.assumeIsolated {
             guard let model else { return .terminateNow }
+            guard !model.isTerminating else { return .terminateCancel }
             let busy = !model.operations.isEmpty || model.firmware.isInstalling || model.logs.sessions.contains { $0.state.isActive }
             let decision = FirmwareTerminationPolicy.decision(critical: model.firmware.terminationBlocked, busy: busy)
             if decision == .deny {
@@ -87,19 +90,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 explainFirmwareWriting()
                 return .terminateCancel
             }
-            if model.firmware.isInstalling {
+            if model.firmware.isInstalling || model.install.hasPreparedResources {
+                model.beginTermination()
+                let requestID = UUID()
+                terminationRequestID = requestID
                 Task { @MainActor in
-                    guard await model.firmware.cancelForTermination() else {
-                        self.explainFirmwareWriting()
-                        sender.reply(toApplicationShouldTerminate: false)
+                    var ready = true
+                    var packageCleanupFailed = false
+                    if model.firmware.isInstalling {
+                        ready = await model.firmware.cancelForTermination()
+                        if !ready { self.explainFirmwareWriting() }
+                    }
+                    if ready {
+                        do { try await model.install.cleanupForTermination() }
+                        catch { model.present(error); packageCleanupFailed = true; ready = false }
+                    }
+                    guard self.terminationRequestID == requestID else {
+                        model.cancelTermination()
                         return
                     }
-                    sender.reply(toApplicationShouldTerminate: self.finishTermination(model) == .terminateNow)
+                    if ready { ready = self.finishTermination(model) == .terminateNow }
+                    self.terminationRequestID = nil
+                    self.terminationDeadlineTask?.cancel()
+                    self.terminationDeadlineTask = nil
+                    if !ready { model.cancelTermination() }
+                    sender.reply(toApplicationShouldTerminate: ready)
+                    if packageCleanupFailed { self.showTerminationFailureWithoutWindow(model) }
+                }
+                terminationDeadlineTask = Task { @MainActor in
+                    do { try await Task.sleep(for: .seconds(8)) }
+                    catch is CancellationError { return }
+                    catch { model.present(error); return }
+                    guard self.terminationRequestID == requestID else { return }
+                    self.terminationRequestID = nil
+                    model.present(ToolkitError(.timedOut, message: "Quit cleanup is still running after eight seconds. The app will remain open.", recovery: "Wait for the active operation to finish, then try quitting again."))
+                    sender.reply(toApplicationShouldTerminate: false)
+                    self.showTerminationFailureWithoutWindow(model)
                 }
                 return .terminateLater
             }
             return finishTermination(model)
         }
+    }
+
+    @MainActor
+    private func showTerminationFailureWithoutWindow(_ model: AppModel) {
+        guard !NSApp.windows.contains(where: { $0.isVisible && $0.contentView != nil }),
+              let error = model.presentedError else { return }
+        let alert = NSAlert()
+        alert.messageText = error.title
+        alert.informativeText = [error.message, error.recovery].compactMap { $0 }.joined(separator: "\n\n")
+        alert.addButton(withTitle: "Keep Running")
+        alert.runModal()
     }
 
     @MainActor

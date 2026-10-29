@@ -109,66 +109,201 @@ final class AppsModel {
 
 // MARK: - Install
 
+/// Immutable input captured before the installation confirmation is presented.
+struct AppInstallPlan: Sendable {
+    let package: PreparedAppPackage
+    let device: Device
+    let developerPackage: Bool
+}
+
 @Observable
 @MainActor
 final class InstallModel {
-    var packageURL: URL?
-    var inspection: IPAInspection?
-    var appBundleName: String?
+    private(set) var packageURL: URL?
+    private(set) var preparedPackage: PreparedAppPackage?
+    private var stalePackages: [PreparedAppPackage] = []
+    private(set) var isInspecting = false
+    private(set) var inspectionError: String?
+    private(set) var isInstalling = false
     var installAsDeveloperPackage = false
+    private var selectionID = UUID()
+    private var inspectionOperation: RunningOperation?
+    private var installationOperation: RunningOperation?
+    private var activePreparations = 0
+    private var isShuttingDown = false
+    private var cleanupWaiters: [CheckedContinuation<Void, Never>] = []
 
-    var isAppBundle: Bool { packageURL?.pathExtension == "app" }
+    var hasPreparedResources: Bool { preparedPackage != nil || !stalePackages.isEmpty || activePreparations > 0 || isInstalling }
+
+    var inspection: IPAInspection? { preparedPackage?.inspection }
+    var appBundleName: String? { isAppBundle ? preparedPackage?.appName : nil }
+    var isAppBundle: Bool { packageURL?.pathExtension.lowercased() == "app" }
 
     func choose(_ url: URL, app: AppModel) async {
-        packageURL = url
-        inspection = nil
-        appBundleName = nil
-        if url.pathExtension == "app" {
-            appBundleName = url.deletingPathExtension().lastPathComponent
+        guard !isShuttingDown && !app.isTerminating else {
+            app.present(ToolkitError.invalidInput("The app is quitting. Cancel quitting before choosing another package."))
             return
         }
-        let result = await app.run("Inspect \(url.lastPathComponent)", workspace: .installApp, target: nil, transport: "Local inspection (Security.framework)", outputPaths: [url.path]) { _ in
-            try IPAInspector.inspect(url)
+        guard !isInstalling else {
+            app.present(ToolkitError(.invalidInput, message: "Wait for the current installation to finish before choosing another package.", recovery: nil, technicalDetail: nil))
+            return
         }
-        inspection = result
+        let generation = UUID()
+        selectionID = generation
+        inspectionOperation?.cancel()
+        if let previous = preparedPackage {
+            do { try previous.remove() }
+            catch {
+                stalePackages.append(previous)
+                preparedPackage = nil
+                packageURL = nil
+                inspectionError = "The previous prepared package could not be removed. Review the reported file error before choosing another package."
+                app.present(error)
+                return
+            }
+        }
+        packageURL = url
+        preparedPackage = nil
+        inspectionError = nil
+        isInspecting = true
+        activePreparations += 1
+        defer {
+            if selectionID == generation {
+                isInspecting = false
+                inspectionOperation = nil
+            }
+            activePreparations -= 1
+            resumeCleanupIfIdle()
+        }
+        let result = await app.run("Inspect \(url.lastPathComponent)", workspace: .installApp, target: nil, transport: "Local inspection (Security.framework)", outputPaths: [url.path], onStart: { self.inspectionOperation = $0 }) { _ in
+            try await PreparedAppPackage.prepareAsync(url)
+        }
+        guard selectionID == generation else {
+            if let result {
+                do { try result.remove() }
+                catch {
+                    stalePackages.append(result)
+                    app.present(error)
+                }
+            }
+            return
+        }
+        preparedPackage = result
+        if result == nil { inspectionError = "Package inspection did not finish successfully. Choose the package again before installing." }
     }
 
-    func install(app: AppModel, device: Device) async {
-        guard let url = packageURL else { return }
+    func blockReason(for device: Device) -> String? {
+        if isShuttingDown { return "Package cleanup is running while the app quits." }
+        if isInstalling { return "An installation is already running." }
+        if isInspecting { return "Wait for package inspection to finish." }
+        guard let preparedPackage else { return inspectionError ?? "Choose and inspect a package before installing." }
+        do {
+            try preparedPackage.validate(for: device.target, supportsCoreDevice: device.supportsCoreDevice, simulatorBooted: device.simulatorState == .booted)
+            return nil
+        } catch { return (error as? ToolkitError)?.message ?? error.localizedDescription }
+    }
+
+    func prepareInstallation(for device: Device, app: AppModel) throws -> AppInstallPlan {
+        guard !isInstalling && !isInspecting && !isShuttingDown, let preparedPackage else {
+            throw ToolkitError(.invalidInput, message: "Package inspection must finish successfully before installation.", recovery: "Choose the package again and wait for inspection.", technicalDetail: nil)
+        }
+        guard !app.isTerminating, app.selectedTarget == device.target else {
+            throw ToolkitError(.invalidInput, message: "The installation target changed before confirmation.", recovery: "Select the target again and review a new installation confirmation.", technicalDetail: nil)
+        }
+        try preparedPackage.validate(for: device.target, supportsCoreDevice: device.supportsCoreDevice, simulatorBooted: device.simulatorState == .booted)
+        return AppInstallPlan(package: preparedPackage, device: device, developerPackage: installAsDeveloperPackage)
+    }
+
+    func install(_ plan: AppInstallPlan, app: AppModel) async {
+        guard !isShuttingDown && !app.isTerminating else {
+            app.present(ToolkitError.invalidInput("The app is quitting. Cancel quitting before starting an app installation."))
+            return
+        }
+        guard !isInstalling && !isInspecting, preparedPackage?.id == plan.package.id else {
+            app.present(ToolkitError(.invalidInput, message: "The package changed after this installation was confirmed.", recovery: "Inspect and confirm the selected package again.", technicalDetail: nil))
+            return
+        }
+        guard app.selectedTarget == plan.device.target else {
+            app.present(ToolkitError(.invalidInput, message: "The installation target changed after confirmation.", recovery: "Select the target again and review a new installation confirmation.", technicalDetail: nil))
+            return
+        }
+        let device = plan.device
         let target = device.target
         let runner = app.runner
-        let developer = installAsDeveloperPackage
-        let succeeded = await app.run("Install \(url.lastPathComponent)", workspace: .installApp, target: target, transport: device.kind == .simulator ? "simctl install" : (device.supportsCoreDevice ? "devicectl device install app" : "AFC + installation_proxy"), argv: [url.path]) { operation in
+        let url = plan.package.packageURL
+        isInstalling = true
+        defer {
+            isInstalling = false
+            installationOperation = nil
+            resumeCleanupIfIdle()
+        }
+        let succeeded = await app.run("Install \(plan.package.appName)", workspace: .installApp, target: target, transport: device.kind == .simulator ? "simctl install" : (device.supportsCoreDevice ? "devicectl device install app" : "AFC + installation_proxy"), argv: [plan.package.originalURL.path], onStart: { self.installationOperation = $0 }) { operation in
+            let validation = Task.detached(priority: .userInitiated) { try plan.package.revalidate() }
+            try await withTaskCancellationHandler {
+                try await validation.value
+            } onCancel: { validation.cancel() }
+            try Task.checkCancellation()
+            try plan.package.validate(for: target, supportsCoreDevice: device.supportsCoreDevice, simulatorBooted: device.simulatorState == .booted)
             switch device.kind {
             case .simulator:
                 try await SimulatorClient(runner: runner).install(appAt: url, on: target)
             case .physical where device.supportsCoreDevice:
                 _ = try await CoreDeviceClient(runner: runner).install(appAt: url, on: target)
             case .physical:
-                guard url.pathExtension == "ipa" else { throw ToolkitError(.unsupported, message: "Without Xcode, only .ipa packages can be installed.") }
                 try await DeviceSession.with(target) { session in
                     let afc = try await AFCClient.openMedia(session)
                     let stagedName = "idt-\(UUID().uuidString.prefix(8)).ipa"
-                    try? await afc.makeDirectory("/PublicStaging")
+                    try await afc.ensureDirectory("/PublicStaging")
                     try await afc.upload(url, to: "/PublicStaging/\(stagedName)") { sent, total in
                         operation.report("Uploading \(ByteFormatting.string(sent)) of \(ByteFormatting.string(total))", progress: total > 0 ? Double(sent) / Double(total) * 0.5 : nil)
                     }
                     await afc.close()
                     let proxy = try await InstallationProxy.open(session)
                     defer { Task { await proxy.close() } }
-                    try await proxy.install(stagedPackagePath: "PublicStaging/\(stagedName)", developerPackage: developer) { percent in
+                    try await proxy.install(stagedPackagePath: "PublicStaging/\(stagedName)", developerPackage: plan.developerPackage) { percent in
                         operation.report("Installing \(percent)%", progress: 0.5 + Double(percent) / 200)
                     }
                 }
             case .demo:
-                throw ToolkitError(.unsupported, message: "Demo Mode cannot install apps.")
+                throw ToolkitError(.unsupported, message: "Demo Mode cannot install apps.", recovery: nil, technicalDetail: nil)
             }
             return true
         }
         if succeeded == true {
-            app.statusMessage = "Installed \(inspection?.appName ?? url.lastPathComponent) on \(target.name)."
-            await app.apps.refresh(app: app, device: device)
+            app.statusMessage = "Installed \(plan.package.appName) on \(target.name)."
+            if app.selectedTarget == target { await app.apps.refresh(app: app, device: device) }
         }
+    }
+
+    /// Waits for this model's package readers before removing its private copy on normal quit.
+    func cleanupForTermination() async throws {
+        isShuttingDown = true
+        defer { isShuttingDown = false }
+        selectionID = UUID()
+        inspectionOperation?.cancel()
+        installationOperation?.cancel()
+        if activePreparations > 0 || isInstalling {
+            await withCheckedContinuation { cleanupWaiters.append($0) }
+        }
+        if let preparedPackage {
+            try preparedPackage.remove()
+            self.preparedPackage = nil
+        }
+        while let stale = stalePackages.first {
+            try stale.remove()
+            stalePackages.removeFirst()
+        }
+        inspectionOperation = nil
+        packageURL = nil
+        inspectionError = nil
+        isInspecting = false
+    }
+
+    private func resumeCleanupIfIdle() {
+        guard activePreparations == 0 && !isInstalling else { return }
+        let waiters = cleanupWaiters
+        cleanupWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
     }
 }
 

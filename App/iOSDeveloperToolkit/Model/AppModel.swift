@@ -92,6 +92,7 @@ final class AppModel {
     }
     var journalRecords: [OperationRecord] = []
     var operations: [RunningOperation] = []
+    private(set) var isTerminating = false
     var presentedError: PresentedError?
     var developerTools: DeveloperToolsStatus?
     var readinessResults: [String: [CapabilityResult]] = [:]
@@ -184,6 +185,14 @@ final class AppModel {
         logs.stopAll()
         location.stopPlayback()
         security.cancel()
+    }
+
+    func beginTermination() {
+        isTerminating = true
+    }
+
+    func cancelTermination() {
+        isTerminating = false
     }
 
     private func apply(_ snapshot: DiscoverySnapshot) {

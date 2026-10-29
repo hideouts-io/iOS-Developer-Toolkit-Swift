@@ -289,6 +289,7 @@ struct TargetPicker: View {
                     } label: {
                         Label("\(device.name) — \(device.displayVersion)\(device.simulatorState == .booted ? " (running)" : "")", systemImage: "\(device.family.symbolName)")
                     }
+                    .accessibilityIdentifier("target-simulator-\(device.udid)")
                 }
             }
             if model.selectedDeviceID != nil {

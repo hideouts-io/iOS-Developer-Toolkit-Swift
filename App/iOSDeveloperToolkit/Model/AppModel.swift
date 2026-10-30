@@ -139,14 +139,15 @@ final class AppModel {
         let isDemoMode = forceDemo || (!uiTesting && UserDefaults.standard.bool(forKey: "demoMode"))
         demoMode = isDemoMode
         selectedDeviceID = forceDemo ? DemoMode.device.id : UserDefaults.standard.string(forKey: "selectedDeviceID")
-        let acceptanceRequested = arguments.contains("-inventory-acceptance-a") || arguments.contains("-inventory-acceptance-b")
+        let acceptanceRequested = arguments.contains("-inventory-acceptance-a") || arguments.contains("-inventory-acceptance-b") || arguments.contains("-inventory-acceptance-owner")
         let acceptanceError: ToolkitError?
 #if DEBUG
         do {
             if let targets = try InventoryAcceptanceTargets.parse(arguments: arguments, uiTesting: uiTesting, demoMode: isDemoMode) {
-                let acceptance = InventoryAcceptance(targets: targets)
+                let base = ProcessCommandRunner()
+                let acceptance = InventoryAcceptance(targets: targets, base: base)
                 inventoryAcceptance = acceptance
-                runner = InventoryAcceptanceRunner(base: ProcessCommandRunner(), acceptance: acceptance)
+                runner = InventoryAcceptanceRunner(base: base, acceptance: acceptance)
             } else {
                 inventoryAcceptance = nil
                 runner = ProcessCommandRunner()

@@ -102,8 +102,30 @@ struct AppsView: View {
         .padding(20)
         .onChange(of: model.selectedTarget) { _, _ in confirmation = nil }
         .sheet(item: $confirmation) { pending in
-            ConfirmationSheet(title: pending.title, detail: pending.detail, requirement: pending.requirement, target: pending.target, commandPreview: nil, onConfirm: pending.action)
+            let confirmationSheet = ConfirmationSheet(title: pending.title, detail: pending.detail, requirement: pending.requirement, target: pending.target, commandPreview: nil, onConfirm: pending.action)
                 .accessibilityIdentifier("apps-confirmation")
+#if DEBUG
+            if let acceptance = model.inventoryAcceptance, let target = pending.target,
+               target.kind == .simulator, target.udid.uppercased() == acceptance.targets.first {
+                VStack {
+                    confirmationSheet
+                    Button("Delete owned test simulator A") {
+                        Task {
+                            await model.run("Delete owned test simulator A", workspace: .apps, target: target, transport: "simctl shutdown/delete") { _ in
+                                try await acceptance.deleteFirstSimulator(target: target)
+                            }
+                        }
+                    }
+                    .disabled(acceptance.isDeletingFirst || acceptance.state != .delivered)
+                    .accessibilityIdentifier("inventory-delete-owned-a")
+                    .padding(.bottom, 20)
+                }
+            } else {
+                confirmationSheet
+            }
+#else
+            confirmationSheet
+#endif
         }
     }
 

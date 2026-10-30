@@ -1,4 +1,5 @@
 #if DEBUG
+import DeviceKit
 import Foundation
 import Observation
 import ToolkitCore
@@ -7,19 +8,23 @@ import ToolkitCore
 struct InventoryAcceptanceTargets: Sendable {
     let first: String
     let second: String
+    let owner: String
 
     static func parse(arguments: [String], uiTesting: Bool, demoMode: Bool) throws(ToolkitError) -> InventoryAcceptanceTargets? {
         let firstFlags = arguments.indices.filter { arguments[$0] == "-inventory-acceptance-a" }
         let secondFlags = arguments.indices.filter { arguments[$0] == "-inventory-acceptance-b" }
-        guard !firstFlags.isEmpty || !secondFlags.isEmpty else { return nil }
-        guard uiTesting, !demoMode, firstFlags.count == 1, secondFlags.count == 1,
+        let ownerFlags = arguments.indices.filter { arguments[$0] == "-inventory-acceptance-owner" }
+        guard !firstFlags.isEmpty || !secondFlags.isEmpty || !ownerFlags.isEmpty else { return nil }
+        guard uiTesting, !demoMode, firstFlags.count == 1, secondFlags.count == 1, ownerFlags.count == 1,
               let firstIndex = firstFlags.first, arguments.indices.contains(firstIndex + 1),
               let secondIndex = secondFlags.first, arguments.indices.contains(secondIndex + 1),
+              let ownerIndex = ownerFlags.first, arguments.indices.contains(ownerIndex + 1),
               let first = UUID(uuidString: arguments[firstIndex + 1]),
-              let second = UUID(uuidString: arguments[secondIndex + 1]), first != second else {
-            throw ToolkitError(.invalidInput, message: "The inventory acceptance launch requires two distinct simulator UUIDs.", recovery: "Use a Debug build with -ui-testing YES, -demo-mode NO and one value for each inventory acceptance target.", technicalDetail: nil)
+              let second = UUID(uuidString: arguments[secondIndex + 1]), first != second,
+              let owner = UUID(uuidString: arguments[ownerIndex + 1]) else {
+            throw ToolkitError(.invalidInput, message: "The inventory acceptance launch requires two distinct simulator UUIDs and an owner UUID.", recovery: "Use a Debug build with -ui-testing YES, -demo-mode NO and one value for each inventory acceptance target and owner.", technicalDetail: nil)
         }
-        return InventoryAcceptanceTargets(first: first.uuidString, second: second.uuidString)
+        return InventoryAcceptanceTargets(first: first.uuidString, second: second.uuidString, owner: owner.uuidString)
     }
 
     func contains(_ identifier: String) -> Bool {
@@ -41,11 +46,14 @@ final class InventoryAcceptance {
 
     let targets: InventoryAcceptanceTargets
     private(set) var state: State = .idle
+    private(set) var isDeletingFirst = false
+    private let base: ProcessCommandRunner
     private var held: (result: CommandResult, continuation: CheckedContinuation<CommandResult, Error>)?
     private var deadline: Task<Void, Never>?
 
-    init(targets: InventoryAcceptanceTargets) {
+    init(targets: InventoryAcceptanceTargets, base: ProcessCommandRunner) {
         self.targets = targets
+        self.base = base
     }
 
     func arm() throws(ToolkitError) {
@@ -69,6 +77,33 @@ final class InventoryAcceptance {
     func inventoryRefreshReturned(target: String) {
         if state == .released && target.uppercased() == targets.first {
             state = .delivered
+        }
+    }
+
+    /// Deletes only the A simulator whose fresh UUID and exact owner-bound name match this run.
+    /// The UI test invokes this inside the observed confirmation sheet to cause real target loss.
+    func deleteFirstSimulator(target: DeviceTarget) async throws {
+        guard state == .delivered else {
+            throw ToolkitError(.invalidInput, message: "The late inventory reply has not completed acceptance yet.", recovery: "Wait for the inventory gate to report delivered before deleting the owned test simulator.", technicalDetail: nil)
+        }
+        guard target.kind == .simulator, target.udid.uppercased() == targets.first, !isDeletingFirst else {
+            throw ToolkitError(.invalidInput, message: "Only this acceptance run’s first owned simulator can be deleted.", recovery: "Use the confirmation for simulator A created by this acceptance run.", technicalDetail: nil)
+        }
+        isDeletingFirst = true
+        defer { isDeletingFirst = false }
+        let client = SimulatorClient(runner: base)
+        let records = try await client.list()
+        guard let record = records.first(where: { $0.udid.uppercased() == targets.first }),
+              record.name == "IDT Inventory A \(targets.owner)" else {
+            throw ToolkitError(.invalidInput, message: "The simulator does not match this acceptance run’s ownership marker.", recovery: "Stop the test and inspect its fixture setup; no simulator was deleted.", technicalDetail: nil)
+        }
+        try await client.shutdown(record.device.target)
+        let deletion = try await base.run(try XcodeTool.simctl.request(["delete", targets.first], timeout: 120, displayName: "simctl delete owned acceptance simulator"))
+        guard deletion.succeeded else {
+            throw ToolkitError(.commandFailed, message: "Deleting the owned acceptance simulator failed.", recovery: "Inspect the simulator fixture failure and rerun the acceptance test.", technicalDetail: deletion.technicalSummary)
+        }
+        guard try await !client.list().contains(where: { $0.udid.uppercased() == targets.first }) else {
+            throw ToolkitError(.protocolViolation, message: "The owned acceptance simulator still exists after deletion.", recovery: "Inspect the simulator service before rerunning the acceptance test.", technicalDetail: nil)
         }
     }
 

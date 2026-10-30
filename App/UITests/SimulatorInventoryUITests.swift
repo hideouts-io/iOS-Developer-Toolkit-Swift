@@ -46,6 +46,14 @@ final class SimulatorInventoryUITests: XCTestCase {
         XCTAssertTrue(application.wait(for: .runningForeground, timeout: 10))
         XCTAssertFalse(element("demo-banner").exists)
 
+        // The discovery command has a 60-second deadline plus process-exit cleanup.
+        // Observe its completion with the menu closed, then require a healthy result;
+        // an open native menu can retain the initial, not-yet-checked item snapshot.
+        let discovery = element("connection-summary")
+        wait(discovery, predicate: "exists == true AND NOT (label CONTAINS 'Simulators: Not checked yet')", timeout: 75)
+        XCTAssertNotNil(discovery.label.range(of: "Simulators: [1-9][0-9]* devices", options: .regularExpression),
+                        "Initial simulator discovery must succeed before opening the target menu: \(discovery.label)")
+
         selectSimulator(a)
         loadInventory(containing: aOnly)
         selectApp(aOnly)

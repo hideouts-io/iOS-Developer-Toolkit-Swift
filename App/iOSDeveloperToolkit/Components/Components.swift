@@ -256,6 +256,7 @@ struct ConfirmationSheet: View {
             }
             if requirement.requiresBackupAcknowledgement {
                 Toggle("I have a current backup and understand this cannot be undone", isOn: $backupAcknowledged)
+                    .accessibilityIdentifier("confirmation-backup-acknowledgement")
             }
             if let phrase = requirement.phrase {
                 VStack(alignment: .leading, spacing: 6) {
@@ -272,6 +273,7 @@ struct ConfirmationSheet: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("confirmation-cancel")
                 Button(requirement.risk == .readOnly ? "Run" : "Continue") {
                     dismiss()
                     onConfirm()

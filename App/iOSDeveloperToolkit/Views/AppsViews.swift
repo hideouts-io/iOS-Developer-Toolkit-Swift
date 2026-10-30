@@ -11,10 +11,33 @@ struct AppsView: View {
         @Bindable var apps = model.apps
         VStack(alignment: .leading, spacing: 12) {
             TargetHeader()
+#if DEBUG
+            if let acceptance = model.inventoryAcceptance {
+                HStack {
+                    Button("Arm inventory acceptance") {
+                        do { try acceptance.arm() } catch { model.present(error) }
+                    }
+                    .disabled(acceptance.state != .idle)
+                    .accessibilityIdentifier("inventory-gate-arm")
+                    Button("Release captured inventory") {
+                        do { try acceptance.release() } catch { model.present(error) }
+                    }
+                    .disabled(acceptance.state != .held)
+                    .accessibilityIdentifier("inventory-gate-release")
+                    Text(acceptance.state.rawValue)
+                        .accessibilityIdentifier("inventory-gate-state")
+                }
+            }
+#endif
             if let device = model.selectedDevice {
                 HStack(spacing: 12) {
                     Button {
-                        Task { await apps.refresh(app: model, device: device) }
+                        Task {
+                            await apps.refresh(app: model, device: device)
+#if DEBUG
+                            model.inventoryAcceptance?.inventoryRefreshReturned(target: device.target.udid)
+#endif
+                        }
                     } label: {
                         Label(apps.loadedFor == device.target ? "Refresh" : "Load Apps", systemImage: "arrow.clockwise")
                     }
@@ -33,6 +56,7 @@ struct AppsView: View {
                 if apps.loadedFor != nil && apps.loadedFor != device.target {
                     Label("This list is from another device. Refresh to load \(device.name).", systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
+                        .accessibilityIdentifier("apps-stale-inventory")
                 }
                 Table(apps.visibleRows, selection: $apps.selection, sortOrder: $apps.sortOrder) {
                     TableColumn("Name", value: \.name) { Text($0.name).accessibilityIdentifier("installed-app-\($0.bundleIdentifier)") }
@@ -62,6 +86,7 @@ struct AppsView: View {
                     Text(apps.rows.isEmpty ? "" : "\(apps.visibleRows.count) of \(apps.rows.count) apps · source: \(apps.source)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("apps-inventory-source")
                     Spacer()
                     if let id = apps.selection.first, let row = apps.rows.first(where: { $0.id == id }) {
                         Button("Copy Bundle ID") { Pasteboard.copy(row.bundleIdentifier) }
@@ -78,6 +103,7 @@ struct AppsView: View {
         .onChange(of: model.selectedTarget) { _, _ in confirmation = nil }
         .sheet(item: $confirmation) { pending in
             ConfirmationSheet(title: pending.title, detail: pending.detail, requirement: pending.requirement, target: pending.target, commandPreview: nil, onConfirm: pending.action)
+                .accessibilityIdentifier("apps-confirmation")
         }
     }
 

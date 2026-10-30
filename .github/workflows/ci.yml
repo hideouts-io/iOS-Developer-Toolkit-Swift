@@ -87,6 +87,30 @@ jobs:
             -configuration Debug -destination 'platform=macOS' \
             -derivedDataPath "$RUNNER_TEMP/dd" -resultBundlePath "$RUNNER_TEMP/UITests.xcresult" \
             test-without-building
+      - name: Two-owned-simulator inventory UI acceptance
+        env:
+          TEST_RUNNER_IDT_INVENTORY_UI_TESTS: "1"
+        run: |
+          xcodebuild -project iOSDeveloperToolkit.xcodeproj -scheme iOSDeveloperToolkit \
+            -configuration Debug -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/dd" -resultBundlePath "$RUNNER_TEMP/InventoryUITests.xcresult" \
+            -only-testing:iOSDeveloperToolkitUITests/SimulatorInventoryUITests test-without-building
+          xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/InventoryUITests.xcresult" \
+            > "$RUNNER_TEMP/InventoryUITests-summary.json"
+          python3 - "$RUNNER_TEMP/InventoryUITests-summary.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          summary = json.loads(Path(sys.argv[1]).read_text())
+          expected = {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0}
+          if not isinstance(summary, dict) or any(type(summary.get(key)) is not int for key in expected):
+              raise SystemExit("Inventory acceptance did not produce valid execution counts.")
+          observed = {key: summary[key] for key in expected}
+          if observed != expected:
+              raise SystemExit(f"Inventory acceptance must execute and pass exactly one test: {observed}")
+          print(f"Two-owned-simulator native acceptance executed: {observed}")
+          PY
       - name: Render every page at the default and minimum window sizes
         run: |
           scripts/check-layout.sh \
@@ -98,6 +122,8 @@ jobs:
           name: ui-test-results
           path: |
             ${{ runner.temp }}/UITests.xcresult
+            ${{ runner.temp }}/InventoryUITests.xcresult
+            ${{ runner.temp }}/InventoryUITests-summary.json
             ${{ runner.temp }}/layout
           if-no-files-found: ignore
 

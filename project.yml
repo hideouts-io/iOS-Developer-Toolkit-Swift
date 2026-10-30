@@ -126,6 +126,10 @@ targets:
       - path: App/UITests
     dependencies:
       - target: iOSDeveloperToolkit
+      - package: Toolkit
+        product: ToolkitCore
+      - package: Toolkit
+        product: DeviceKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.hideouts.iOSDeveloperToolkitUITests

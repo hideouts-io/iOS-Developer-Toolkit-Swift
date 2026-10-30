@@ -212,6 +212,43 @@ final class SmokeUITests: XCTestCase {
         attachScreenshot("action-detail")
     }
 
+    func testDemoAppInventoryDisablesFooterAndContextActions() throws {
+        openWorkspace("apps")
+        let load = app.buttons["load-apps"]
+        XCTAssertTrue(load.waitForExistence(timeout: 5))
+        load.click()
+        let row = app.descendants(matching: .any)["installed-app-com.example.sample"]
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        XCTAssertTrue(row.isHittable, "The demo inventory row must be visible before selection")
+        row.click()
+
+        let launch = app.buttons["apps-launch"]
+        let remove = app.buttons["apps-remove"]
+        XCTAssertTrue(launch.waitForExistence(timeout: 5))
+        XCTAssertTrue(remove.waitForExistence(timeout: 5))
+        XCTAssertFalse(launch.isEnabled, "Demo app inventory must not authorize Launch")
+        XCTAssertFalse(remove.isEnabled, "Demo app inventory must not authorize Remove")
+
+        let table = app.descendants(matching: .any)["installed-apps-table"]
+        XCTAssertEqual(table.outlineRows.count, 1, "The demo inventory must expose exactly one visible row")
+        let menuRow = table.outlineRows.element(boundBy: 0)
+        XCTAssertTrue(menuRow.isHittable, "The native inventory row must be reachable before opening its menu")
+        row.rightClick()
+        // SwiftUI's native menu omits identifiers on disabled items. Anchor the observed
+        // menu hierarchy to this table's stable ID and verify its complete action order.
+        let menu = table.menus.element
+        XCTAssertTrue(menu.waitForExistence(timeout: 5))
+        let actions = menu.menuItems.matching(NSPredicate(format: "title != ''"))
+        XCTAssertEqual(actions.count, 3, "The app inventory menu must contain Copy, Launch and Remove")
+        guard actions.count == 3 else { return }
+        XCTAssertTrue(actions.element(boundBy: 0).isEnabled, "Copying a demo bundle ID must remain available")
+        XCTAssertFalse(actions.element(boundBy: 1).isEnabled, "Demo inventory context menus must not authorize Launch")
+        XCTAssertFalse(actions.element(boundBy: 2).isEnabled, "Demo inventory context menus must not authorize Remove")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertFalse(app.buttons["running-operations"].exists, "Inspecting blocked app actions must not start an operation")
+        attachScreenshot("demo-app-actions-blocked")
+    }
+
     func testCommandCategoriesExposeExistingActionsWithoutExecuting() throws {
         openWorkspace("actions")
         let categories: [(key: String, action: String)] = [

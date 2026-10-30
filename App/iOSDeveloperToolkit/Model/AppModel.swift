@@ -65,7 +65,10 @@ final class RunningOperation: Identifiable {
 final class AppModel {
     // MARK: Services
 
-    let runner: OwnedCommandRunning = ProcessCommandRunner()
+    let runner: OwnedCommandRunning
+#if DEBUG
+    let inventoryAcceptance: InventoryAcceptance?
+#endif
     let journal = OperationJournal()
     let discovery: DeviceDiscovery
     /// A fresh executor carries the current developer-image folders.
@@ -76,7 +79,10 @@ final class AppModel {
 
     var snapshot = DiscoverySnapshot()
     var selectedDeviceID: String? {
-        didSet { UserDefaults.standard.set(selectedDeviceID, forKey: "selectedDeviceID") }
+        didSet {
+            UserDefaults.standard.set(selectedDeviceID, forKey: "selectedDeviceID")
+            if oldValue != selectedDeviceID { apps.selectionChanged() }
+        }
     }
     var workspace: Workspace = .overview
     /// The Actions page's category filter and selection (set by profiles and the command palette).
@@ -130,11 +136,41 @@ final class AppModel {
         }
         let uiTesting = flag("-ui-testing") ?? false
         let forceDemo = flag("-demo-mode") ?? false
-        demoMode = forceDemo || (!uiTesting && UserDefaults.standard.bool(forKey: "demoMode"))
+        let isDemoMode = forceDemo || (!uiTesting && UserDefaults.standard.bool(forKey: "demoMode"))
+        demoMode = isDemoMode
         selectedDeviceID = forceDemo ? DemoMode.device.id : UserDefaults.standard.string(forKey: "selectedDeviceID")
-        // UI tests run without touching real discovery sources.
-        let configuration: DeviceDiscovery.Configuration = uiTesting
-            ? .init(usbmux: USBMuxClient(socketPath: "/nonexistent/ui-testing-usbmuxd"), coreDevice: nil, simulators: nil, enrichWithLockdown: false)
+        let acceptanceRequested = arguments.contains("-inventory-acceptance-a") || arguments.contains("-inventory-acceptance-b") || arguments.contains("-inventory-acceptance-owner")
+        let acceptanceError: ToolkitError?
+#if DEBUG
+        do {
+            if let targets = try InventoryAcceptanceTargets.parse(arguments: arguments, uiTesting: uiTesting, demoMode: isDemoMode) {
+                let base = ProcessCommandRunner()
+                let acceptance = InventoryAcceptance(targets: targets, base: base)
+                inventoryAcceptance = acceptance
+                runner = InventoryAcceptanceRunner(base: base, acceptance: acceptance)
+            } else {
+                inventoryAcceptance = nil
+                runner = ProcessCommandRunner()
+            }
+            acceptanceError = nil
+        } catch {
+            inventoryAcceptance = nil
+            runner = ProcessCommandRunner()
+            acceptanceError = error
+        }
+#else
+        runner = ProcessCommandRunner()
+        acceptanceError = acceptanceRequested ? ToolkitError(.unsupported, message: "Inventory acceptance requires a Debug build.", recovery: "Build the Debug configuration and rerun the native acceptance test.", technicalDetail: nil) : nil
+#endif
+        let acceptanceSimulators: SimulatorClient?
+#if DEBUG
+        acceptanceSimulators = inventoryAcceptance == nil ? nil : SimulatorClient(runner: runner)
+#else
+        acceptanceSimulators = nil
+#endif
+        // UI tests exclude physical discovery; only the explicit acceptance launch enables simulators.
+        let configuration: DeviceDiscovery.Configuration = uiTesting || acceptanceRequested
+            ? .init(usbmux: USBMuxClient(socketPath: "/nonexistent/ui-testing-usbmuxd"), coreDevice: nil, simulators: acceptanceSimulators, enrichWithLockdown: false)
             : .init()
         discovery = DeviceDiscovery(configuration: configuration)
         developerImage = DeveloperImageModel()
@@ -150,6 +186,7 @@ final class AppModel {
         if let destination = arguments.firstIndex(of: "-workspace").flatMap({ arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil }).flatMap(Workspace.init(rawValue:)) {
             workspace = destination
         }
+        if let acceptanceError { presentedError = PresentedError(acceptanceError) }
     }
 
     // MARK: Lifecycle
@@ -208,7 +245,12 @@ final class AppModel {
     // MARK: Devices
 
     var allDevices: [Device] {
-        demoMode ? [DemoMode.device] + snapshot.devices : snapshot.devices
+#if DEBUG
+        if let inventoryAcceptance {
+            return snapshot.devices.filter { $0.kind == .simulator && inventoryAcceptance.targets.contains($0.udid) }
+        }
+#endif
+        return demoMode ? [DemoMode.device] + snapshot.devices : snapshot.devices
     }
 
     var physicalDevices: [Device] { allDevices.filter { $0.kind == .physical || $0.kind == .demo } }

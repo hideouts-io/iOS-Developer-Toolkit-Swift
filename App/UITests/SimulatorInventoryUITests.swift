@@ -85,23 +85,24 @@ final class SimulatorInventoryUITests: XCTestCase {
         selectSimulator(a)
         loadInventory(containing: aOnly)
         element("inventory-gate-arm").click()
-        wait(element("inventory-gate-state"), predicate: "label == 'armed'", timeout: 10)
+        wait(element("inventory-gate-state"), predicate: "value == 'armed'", timeout: 10)
         element("load-apps").click()
-        wait(element("inventory-gate-state"), predicate: "label == 'held'", timeout: 120)
+        wait(element("inventory-gate-state"), predicate: "value == 'held'", timeout: 120)
         selectSimulator(b)
         loadInventory(containing: bOnly)
         element("installed-app-\(bOnly)").click()
         wait(element("apps-launch"), predicate: "exists == true AND enabled == true", timeout: 10)
-        let currentSource = element("apps-inventory-source").label
+        let currentSource = try XCTUnwrap(element("apps-inventory-source").value as? String)
+        XCTAssertFalse(currentSource.isEmpty, "The inventory provenance must expose a readable native value")
         element("inventory-gate-release").click()
-        wait(element("inventory-gate-state"), predicate: "label == 'delivered'", timeout: 10)
+        wait(element("inventory-gate-state"), predicate: "value == 'delivered'", timeout: 10)
         wait(element("running-operations"), predicate: "exists == false", timeout: 30)
         XCTAssertEqual(application.sheets.count, 0, "A late reply must parse successfully without presenting an error")
         XCTAssertEqual(application.alerts.count, 0)
         XCTAssertTrue(element("installed-app-\(bOnly)").exists)
         XCTAssertFalse(element("installed-app-\(aOnly)").exists)
         XCTAssertFalse(element("apps-stale-inventory").exists)
-        XCTAssertEqual(element("apps-inventory-source").label, currentSource)
+        XCTAssertEqual(element("apps-inventory-source").value as? String, currentSource)
         XCTAssertTrue(element("apps-launch").isEnabled, "Late A must preserve B's selected valid row")
 
         // A modal confirmation cannot assume that the target picker remains reachable.
@@ -141,7 +142,7 @@ final class SimulatorInventoryUITests: XCTestCase {
             add(attachment)
         }
         XCTAssertEqual(result, .completed,
-                       "Expected \(element.identifier): \(predicate)")
+                       "The native accessibility condition did not settle: \(predicate). Inspect the attached hierarchy and preceding element query.")
     }
 
     private func selectSimulator(_ identifier: String) {

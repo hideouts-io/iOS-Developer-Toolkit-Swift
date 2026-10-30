@@ -303,6 +303,7 @@ struct TargetPicker: View {
                     Text(model.selectedDevice?.name ?? "Choose a Device")
                         .font(.headline)
                         .lineLimit(1)
+                        .truncationMode(.middle)
                     if let device = model.selectedDevice {
                         Text(device.kind.label)
                             .font(.caption2)
@@ -312,7 +313,8 @@ struct TargetPicker: View {
             }
         }
         .menuIndicator(.visible)
-        .fixedSize()
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(minWidth: 140, idealWidth: 200, maxWidth: 240, alignment: .leading)
         .help("Choose the device or simulator that actions affect")
         .accessibilityIdentifier("target-picker")
     }

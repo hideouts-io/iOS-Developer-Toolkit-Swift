@@ -103,7 +103,6 @@ struct AppsView: View {
         .onChange(of: model.selectedTarget) { _, _ in confirmation = nil }
         .sheet(item: $confirmation) { pending in
             let confirmationSheet = ConfirmationSheet(title: pending.title, detail: pending.detail, requirement: pending.requirement, target: pending.target, commandPreview: nil, onConfirm: pending.action)
-                .accessibilityIdentifier("apps-confirmation")
 #if DEBUG
             if let acceptance = model.inventoryAcceptance, let target = pending.target,
                target.kind == .simulator, target.udid.uppercased() == acceptance.targets.first {

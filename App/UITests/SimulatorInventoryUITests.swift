@@ -111,12 +111,13 @@ final class SimulatorInventoryUITests: XCTestCase {
         loadInventory(containing: aOnly)
         element("installed-app-\(shared)").click()
         element("apps-remove").click()
-        wait(element("apps-confirmation"), predicate: "exists == true", timeout: 10)
+        wait(element("confirm-button"), predicate: "exists == true", timeout: 10)
+        XCTAssertEqual(application.sheets.count, 1)
         XCTAssertFalse(element("confirm-button").isEnabled)
         let deleteOwnedA = element("inventory-delete-owned-a")
         wait(deleteOwnedA, predicate: "exists == true AND enabled == true", timeout: 10)
         deleteOwnedA.click()
-        wait(element("apps-confirmation"), predicate: "exists == false", timeout: 180)
+        wait(element("confirm-button"), predicate: "exists == false", timeout: 180)
         selectSimulator(b)
         loadInventory(containing: bOnly)
         wait(element("running-operations"), predicate: "exists == false", timeout: 120)
@@ -179,14 +180,16 @@ final class SimulatorInventoryUITests: XCTestCase {
     }
 
     private func confirmRemoval(on identifier: String) {
-        wait(element("apps-confirmation"), predicate: "exists == true", timeout: 10)
+        wait(element("confirm-button"), predicate: "exists == true", timeout: 10)
+        XCTAssertEqual(app?.sheets.count, 1)
         let field = element("confirmation-field")
+        wait(field, predicate: "exists == true AND hittable == true", timeout: 10)
         field.click()
         field.typeText("IRREVERSIBLE \(identifier.replacingOccurrences(of: "-", with: "").suffix(6))")
         element("confirmation-backup-acknowledgement").click()
         wait(element("confirm-button"), predicate: "enabled == true", timeout: 10)
         element("confirm-button").click()
-        wait(element("apps-confirmation"), predicate: "exists == false", timeout: 10)
+        wait(element("confirm-button"), predicate: "exists == false", timeout: 10)
     }
 
     private struct InventoryFixtures: Decodable {

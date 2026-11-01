@@ -47,6 +47,7 @@ final class InventoryAcceptance {
     let targets: InventoryAcceptanceTargets
     private(set) var state: State = .idle
     private(set) var isDeletingFirst = false
+    private(set) var selectionInputTrace: [String] = []
     private let base: ProcessCommandRunner
     private var held: (result: CommandResult, continuation: CheckedContinuation<CommandResult, Error>)?
     private var deadline: Task<Void, Never>?
@@ -54,6 +55,13 @@ final class InventoryAcceptance {
     init(targets: InventoryAcceptanceTargets, base: ProcessCommandRunner) {
         self.targets = targets
         self.base = base
+    }
+
+    /// Observes native table binding writes without changing the selection or action policy.
+    func recordSelectionInput(previous: Set<String>, next: Set<String>) {
+        let before = previous.sorted().joined(separator: ",").prefix(256)
+        let after = next.sorted().joined(separator: ",").prefix(256)
+        selectionInputTrace = Array((selectionInputTrace + ["[\(before)] → [\(after)]"]).suffix(8))
     }
 
     func arm() throws(ToolkitError) {

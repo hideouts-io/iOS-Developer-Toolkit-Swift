@@ -56,14 +56,14 @@ final class SimulatorInventoryUITests: XCTestCase {
 
         selectSimulator(a)
         loadInventory(containing: aOnly)
-        selectApp(aOnly)
+        try selectApp(aOnly)
         wait(element("apps-launch"), predicate: "exists == true AND enabled == true", timeout: 10)
 
         selectSimulator(b)
         wait(element("apps-launch"), predicate: "exists == false", timeout: 10)
         XCTAssertFalse(element("apps-remove").exists, "Changing target must clear row selection")
         wait(element("apps-stale-inventory"), predicate: "exists == true", timeout: 10)
-        selectApp(aOnly)
+        try selectApp(aOnly)
         wait(element("apps-launch"), predicate: "exists == true AND enabled == false", timeout: 10)
         XCTAssertFalse(element("apps-remove").isEnabled)
         assertStaleContextActionsAreDisabled(row: element("installed-app-\(aOnly)"))
@@ -72,7 +72,7 @@ final class SimulatorInventoryUITests: XCTestCase {
         loadInventory(containing: bOnly)
         XCTAssertFalse(element("installed-app-\(aOnly)").exists)
         XCTAssertFalse(element("apps-stale-inventory").exists)
-        selectApp(shared)
+        try selectApp(shared)
         wait(element("apps-remove"), predicate: "exists == true AND enabled == true", timeout: 10)
         element("apps-remove").click()
         confirmRemoval(on: b)
@@ -98,7 +98,7 @@ final class SimulatorInventoryUITests: XCTestCase {
         wait(element("inventory-gate-state"), predicate: "value == 'held'", timeout: 120)
         selectSimulator(b)
         loadInventory(containing: bOnly)
-        selectApp(bOnly)
+        try selectApp(bOnly)
         wait(element("apps-launch"), predicate: "exists == true AND enabled == true", timeout: 10)
         let currentSource = try XCTUnwrap(element("apps-inventory-source").value as? String)
         XCTAssertFalse(currentSource.isEmpty, "The inventory provenance must expose a readable native value")
@@ -117,7 +117,7 @@ final class SimulatorInventoryUITests: XCTestCase {
         // Real loss of owned A exercises the observed target-change dismissal path instead.
         selectSimulator(a)
         loadInventory(containing: aOnly)
-        selectApp(shared)
+        try selectApp(shared)
         element("apps-remove").click()
         wait(element("confirm-button"), predicate: "exists == true", timeout: 10)
         XCTAssertEqual(application.sheets.count, 1)
@@ -164,13 +164,30 @@ final class SimulatorInventoryUITests: XCTestCase {
         wait(target, predicate: "exists == false", timeout: 10)
     }
 
-    private func selectApp(_ bundle: String) {
+    private func selectApp(_ bundle: String) throws {
         let rows = element("installed-apps-table").outlineRows.containing(.any, identifier: "installed-app-\(bundle)")
         XCTAssertEqual(rows.count, 1, "The stable app identifier must resolve to one native outline row")
         let row = rows.element
         wait(row, predicate: "exists == true AND hittable == true", timeout: 10)
-        row.click()
+        let name = row.descendants(matching: .any)["installed-app-\(bundle)"]
+        wait(name, predicate: "exists == true AND hittable == true", timeout: 10)
+        try attachSelectionInput(phase: "before click", row: row)
+        // A native outline row's computed hittable point can lie beyond its cells.
+        // Send one real click to the center of the cell identified by this bundle ID.
+        name.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        try attachSelectionInput(phase: "after click", row: row)
         wait(row, predicate: "selected == true", timeout: 10)
+    }
+
+    private func attachSelectionInput(phase: String, row: XCUIElement) throws {
+        let input = element("inventory-selection-input")
+        wait(input, predicate: "exists == true", timeout: 10)
+        let trace = try XCTUnwrap(input.value as? String, "Selection input diagnostic must expose a native value")
+        XCTAssertFalse(trace.isEmpty)
+        let attachment = XCTAttachment(string: "\(phase): selected=\(row.isSelected); \(trace)")
+        attachment.name = "inventory-selection-\(phase)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private func loadInventory(containing bundle: String) {

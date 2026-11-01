@@ -26,6 +26,11 @@ struct AppsView: View {
                     .accessibilityIdentifier("inventory-gate-release")
                     Text(acceptance.state.rawValue)
                         .accessibilityIdentifier("inventory-gate-state")
+                    Text("Selection input")
+                        .font(.caption)
+                        .lineLimit(1)
+                        .accessibilityIdentifier("inventory-selection-input")
+                        .accessibilityValue(Text(verbatim: "writes: \(acceptance.selectionInputTrace.joined(separator: "; ")); current: \(apps.selection.sorted().joined(separator: ",").prefix(256)); loading: \(apps.isLoading)"))
                 }
             }
 #endif
@@ -58,7 +63,7 @@ struct AppsView: View {
                         .foregroundStyle(.orange)
                         .accessibilityIdentifier("apps-stale-inventory")
                 }
-                Table(apps.visibleRows, selection: $apps.selection, sortOrder: $apps.sortOrder) {
+                Table(apps.visibleRows, selection: appSelection, sortOrder: $apps.sortOrder) {
                     TableColumn("Name", value: \.name) { Text($0.name).accessibilityIdentifier("installed-app-\($0.bundleIdentifier)") }
                     TableColumn("Bundle ID", value: \.bundleIdentifier) { Text($0.bundleIdentifier).font(.callout.monospaced()) }
                     TableColumn("Version", value: \.version) { Text($0.build.isEmpty ? $0.version : "\($0.version) (\($0.build))") }
@@ -126,6 +131,19 @@ struct AppsView: View {
             confirmationSheet
 #endif
         }
+    }
+
+    private var appSelection: Binding<Set<AppRow.ID>> {
+        @Bindable var apps = model.apps
+#if DEBUG
+        if let acceptance = model.inventoryAcceptance {
+            return Binding(get: { apps.selection }, set: { next in
+                acceptance.recordSelectionInput(previous: apps.selection, next: next)
+                apps.selection = next
+            })
+        }
+#endif
+        return $apps.selection
     }
 
     private func confirmRemove(_ row: AppRow, _ device: Device) {

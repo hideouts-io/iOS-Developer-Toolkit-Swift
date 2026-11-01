@@ -54,7 +54,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
             COMPILATION_CACHE_ENABLE_CACHING=NO SWIFT_ENABLE_COMPILE_CACHE=NO \
             SWIFT_USE_INTEGRATED_DRIVER=NO build
-      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           upload: never
           upload-database: false
@@ -109,7 +109,7 @@ jobs:
         with:
           languages: actions
           build-mode: none
-      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           upload: never
           upload-database: false

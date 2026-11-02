@@ -166,15 +166,26 @@ final class SimulatorInventoryUITests: XCTestCase {
     }
 
     private func selectApp(_ bundle: String) throws {
-        let rows = element("installed-apps-table").outlineRows.containing(.any, identifier: "installed-app-\(bundle)")
+        let table = element("installed-apps-table")
+        let rows = table.outlineRows.containing(.any, identifier: "installed-app-\(bundle)")
         XCTAssertEqual(rows.count, 1, "The stable app identifier must resolve to one native outline row")
         let row = rows.element
-        wait(row, predicate: "exists == true AND hittable == true", timeout: 10)
-        let name = row.descendants(matching: .any)["installed-app-\(bundle)"]
+        wait(row, predicate: "exists == true", timeout: 10)
+        // Native outline containers can be unhittable while their identified cells are reachable.
+        // Require reachability on the actual click target and selection on its unique parent row.
+        let names = table.staticTexts.matching(identifier: "installed-app-\(bundle)")
+        XCTAssertEqual(names.count, 1, "The click target must be one identified name cell in this table")
+        let name = names.element
         wait(name, predicate: "exists == true AND hittable == true", timeout: 10)
         try attachSelectionInput(phase: "readiness check", row: row)
         wait(element("inventory-selection-input"), predicate: "value CONTAINS 'window-ready: true'", timeout: 10)
         try attachSelectionInput(phase: "before click", row: row)
+        let window = try XCTUnwrap(app).windows["main-AppWindow-1"]
+        let frame = name.frame
+        XCTAssertGreaterThan(frame.width, 0)
+        XCTAssertGreaterThan(frame.height, 0)
+        XCTAssertTrue(window.frame.contains(CGPoint(x: frame.midX, y: frame.midY)),
+                      "The identified cell's click center must be inside the main window")
         // A native outline row's computed hittable point can lie beyond its cells.
         // Send one real click to the center of the cell identified by this bundle ID.
         name.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()

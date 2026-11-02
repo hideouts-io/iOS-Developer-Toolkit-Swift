@@ -1,4 +1,5 @@
 #if DEBUG
+import AppKit
 import DeviceKit
 import Foundation
 import Observation
@@ -33,6 +34,23 @@ struct InventoryAcceptanceTargets: Sendable {
     }
 }
 
+/// An observed AppKit snapshot, without changing activation, focus or selection.
+struct InventoryWindowReadiness: Sendable {
+    let applicationActive: Bool
+    let mainWindowPresent: Bool
+    let keyWindowPresent: Bool
+    let mainWindowKey: Bool
+    let keyWindowMatchesMain: Bool
+
+    var isReady: Bool {
+        applicationActive && mainWindowPresent && keyWindowPresent && mainWindowKey && keyWindowMatchesMain
+    }
+
+    var diagnostic: String {
+        "window-ready: \(isReady); app-active: \(applicationActive); main-present: \(mainWindowPresent); key-present: \(keyWindowPresent); main-key: \(mainWindowKey); key-is-main: \(keyWindowMatchesMain)"
+    }
+}
+
 /// Holds one successful real A inventory reply until the native UI test explicitly releases it.
 /// Cancellation deliberately does not discard that reply: the production inventory generation
 /// check must reject its late delivery after B has loaded. Delivery is acknowledged only after
@@ -48,6 +66,7 @@ final class InventoryAcceptance {
     private(set) var state: State = .idle
     private(set) var isDeletingFirst = false
     private(set) var selectionInputTrace: [String] = []
+    private(set) var windowReadiness: InventoryWindowReadiness? = nil
     private let base: ProcessCommandRunner
     private var held: (result: CommandResult, continuation: CheckedContinuation<CommandResult, Error>)?
     private var deadline: Task<Void, Never>?
@@ -62,6 +81,18 @@ final class InventoryAcceptance {
         let before = previous.sorted().joined(separator: ",").prefix(256)
         let after = next.sorted().joined(separator: ",").prefix(256)
         selectionInputTrace = Array((selectionInputTrace + ["[\(before)] → [\(after)]"]).suffix(8))
+    }
+
+    func recordWindowReadiness(application: NSApplication) {
+        let mainWindow: NSWindow? = application.mainWindow
+        let keyWindow: NSWindow? = application.keyWindow
+        windowReadiness = InventoryWindowReadiness(
+            applicationActive: application.isActive,
+            mainWindowPresent: mainWindow != nil,
+            keyWindowPresent: keyWindow != nil,
+            mainWindowKey: mainWindow?.isKeyWindow == true,
+            keyWindowMatchesMain: mainWindow != nil && keyWindow != nil && keyWindow === mainWindow
+        )
     }
 
     func arm() throws(ToolkitError) {

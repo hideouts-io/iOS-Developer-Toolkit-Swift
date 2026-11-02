@@ -2,6 +2,10 @@ import DeviceKit
 import SwiftUI
 import ToolkitCore
 import ToolkitFeatures
+#if DEBUG
+import AppKit
+import Combine
+#endif
 
 struct AppsView: View {
     @Environment(AppModel.self) private var model
@@ -30,7 +34,11 @@ struct AppsView: View {
                         .font(.caption)
                         .lineLimit(1)
                         .accessibilityIdentifier("inventory-selection-input")
-                        .accessibilityValue(Text(verbatim: "writes: \(acceptance.selectionInputTrace.joined(separator: "; ")); current: \(apps.selection.sorted().joined(separator: ",").prefix(256)); loading: \(apps.isLoading)"))
+                        .accessibilityValue(Text(verbatim: "writes: \(acceptance.selectionInputTrace.joined(separator: "; ")); current: \(apps.selection.sorted().joined(separator: ",").prefix(256)); loading: \(apps.isLoading); \(acceptance.windowReadiness.map(\.diagnostic) ?? "window-readiness: unobserved")"))
+                }
+                .onAppear { acceptance.recordWindowReadiness(application: .shared) }
+                .onReceive(inventoryWindowReadinessEvents) { _ in
+                    acceptance.recordWindowReadiness(application: .shared)
                 }
             }
 #endif
@@ -132,6 +140,17 @@ struct AppsView: View {
 #endif
         }
     }
+
+#if DEBUG
+    private var inventoryWindowReadinessEvents: Publishers.MergeMany<NotificationCenter.Publisher> {
+        let events: [Notification.Name] = [
+            NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification,
+            NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
+            NSWindow.didBecomeMainNotification, NSWindow.didResignMainNotification,
+        ]
+        return Publishers.MergeMany(events.map { NotificationCenter.default.publisher(for: $0, object: nil) })
+    }
+#endif
 
     private var appSelection: Binding<Set<AppRow.ID>> {
         @Bindable var apps = model.apps

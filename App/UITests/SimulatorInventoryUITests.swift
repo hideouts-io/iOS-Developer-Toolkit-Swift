@@ -43,6 +43,7 @@ final class SimulatorInventoryUITests: XCTestCase {
                                        "-workspace", "apps", "-ApplePersistenceIgnoreState", "YES"]
         application.launchEnvironment["IDT_RESTORE_HELPERS"] = ""
         application.launch()
+        application.activate()
         XCTAssertTrue(application.wait(for: .runningForeground, timeout: 10))
         XCTAssertFalse(element("demo-banner").exists)
 
@@ -171,6 +172,8 @@ final class SimulatorInventoryUITests: XCTestCase {
         wait(row, predicate: "exists == true AND hittable == true", timeout: 10)
         let name = row.descendants(matching: .any)["installed-app-\(bundle)"]
         wait(name, predicate: "exists == true AND hittable == true", timeout: 10)
+        try attachSelectionInput(phase: "readiness check", row: row)
+        wait(element("inventory-selection-input"), predicate: "value CONTAINS 'window-ready: true'", timeout: 10)
         try attachSelectionInput(phase: "before click", row: row)
         // A native outline row's computed hittable point can lie beyond its cells.
         // Send one real click to the center of the cell identified by this bundle ID.
@@ -188,6 +191,13 @@ final class SimulatorInventoryUITests: XCTestCase {
         attachment.name = "inventory-selection-\(phase)"
         attachment.lifetime = .keepAlways
         add(attachment)
+        let application = try XCTUnwrap(app)
+        let window = application.windows["main-AppWindow-1"]
+        XCTAssertTrue(window.exists, "The identified main window must exist for input evidence")
+        let screenshot = XCTAttachment(screenshot: window.screenshot())
+        screenshot.name = "inventory-window-\(phase)"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     private func loadInventory(containing bundle: String) {

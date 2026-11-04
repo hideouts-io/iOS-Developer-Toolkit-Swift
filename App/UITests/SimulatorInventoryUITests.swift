@@ -78,8 +78,14 @@ final class SimulatorInventoryUITests: XCTestCase {
         element("load-apps").click()
         wait(element("error-message"), predicate: "exists == true", timeout: 75)
         XCTAssertEqual(application.sheets.count, 1)
-        XCTAssertEqual(element("error-message").label, "The simulator is not running.")
-        XCTAssertEqual(element("error-recovery").label, "Start the simulator, then try again.")
+        let errorMessage = try XCTUnwrap(element("error-message").value as? String)
+        let errorRecovery = try XCTUnwrap(element("error-recovery").value as? String)
+        let failureText = XCTAttachment(string: "message: \(errorMessage.prefix(2048))\nrecovery: \(errorRecovery.prefix(2048))")
+        failureText.name = "inventory-failed-refresh-error"
+        failureText.lifetime = .keepAlways
+        add(failureText)
+        XCTAssertEqual(errorMessage, "The simulator is not running.")
+        XCTAssertEqual(errorRecovery, "Start the simulator, then try again.")
         let dismissError = element("error-dismiss")
         wait(dismissError, predicate: "exists == true AND hittable == true", timeout: 10)
         dismissError.click()

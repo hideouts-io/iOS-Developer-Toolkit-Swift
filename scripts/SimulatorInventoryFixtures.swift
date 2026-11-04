@@ -82,7 +82,34 @@ struct SimulatorInventoryFixtures {
         for (identifier, app) in [(first, firstApp), (first, sharedApp), (second, secondApp), (second, sharedApp)] {
             _ = try await command(["simctl", "install", identifier, app.path], timeout: 600, runner: runner)
         }
-        print("[inventory fixtures] Two owned simulators and their isolated app inventories are ready.")
+        try await prepareSecondInventoryFailure(identifier: second, owner: owner, runner: runner)
+        print("[inventory fixtures] Two owned inventories are ready; B is shut down for real read-failure and production-start recovery acceptance.")
+    }
+
+    /// Proves the runner's actual shutdown-state listapps failure before UI acceptance uses it.
+    /// B retains its UUID and installed apps; the app must start it through its production route.
+    static func prepareSecondInventoryFailure(identifier: String, owner: String, runner: ProcessCommandRunner) async throws {
+        let expectedName = "IDT Inventory B \(owner)"
+        guard try await simulators(runner: runner).contains(where: {
+            $0.identifier == identifier && $0.name == expectedName && $0.available && $0.state == "Booted"
+        }) else {
+            throw failure("The B inventory preflight requires this run’s booted, owner-matched simulator.", cause: nil)
+        }
+        _ = try await command(["simctl", "listapps", identifier], timeout: 60, runner: runner)
+        _ = try await command(["simctl", "shutdown", identifier], timeout: 120, runner: runner)
+        guard try await simulators(runner: runner).contains(where: {
+            $0.identifier == identifier && $0.name == expectedName && $0.available && $0.state == "Shutdown"
+        }) else {
+            throw failure("The owned B simulator did not reach Shutdown during inventory preflight.", cause: nil)
+        }
+        let request = CommandRequest(executable: try AppleTool.xcrun.locate(), arguments: ["simctl", "listapps", identifier], timeout: 60, displayName: "inventory shutdown-state read preflight")
+        let result = try await runner.run(request)
+        guard case .exited(let code) = result.termination, code != 0,
+              result.standardErrorText.contains("current state: Shutdown") else {
+            throw failure("The hosted runner did not produce the required real shutdown-state inventory failure; no failure was injected.", cause: nil)
+                .appendingDetail(String(result.technicalSummary.prefix(1536)))
+        }
+        print("[inventory fixtures] Real B listapps preflight: booted read succeeded; shutdown read exited \(code) with current state: Shutdown.")
     }
 
     static func cleanup(directory: URL, runner: ProcessCommandRunner) async throws {

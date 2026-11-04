@@ -299,8 +299,10 @@ struct ErrorSheet: View {
                 .font(.title2.bold())
                 .foregroundStyle(.orange)
             Text(error.message).font(.body).fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("error-message")
             if let recovery = error.recovery {
                 Text(recovery).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("error-recovery")
             }
             if let details = error.details, !details.isEmpty {
                 DisclosureGroup("Technical details") {
@@ -318,11 +320,11 @@ struct ErrorSheet: View {
             HStack {
                 Spacer()
                 Button("OK") { dismiss() }.keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("error-dismiss")
             }
         }
         .padding(20)
         .frame(width: 520)
-        .accessibilityIdentifier("error-sheet")
     }
 }
 

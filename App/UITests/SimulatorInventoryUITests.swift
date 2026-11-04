@@ -59,6 +59,9 @@ final class SimulatorInventoryUITests: XCTestCase {
         loadInventory(containing: aOnly)
         try selectApp(aOnly)
         wait(element("apps-launch"), predicate: "exists == true AND enabled == true", timeout: 10)
+        let sourceA = try XCTUnwrap(element("apps-inventory-source").value as? String)
+        XCTAssertFalse(sourceA.isEmpty, "A's inventory must expose its original source")
+        XCTAssertEqual(element("inventory-loaded-owner").value as? String, a)
 
         selectSimulator(b)
         wait(element("apps-launch"), predicate: "exists == false", timeout: 10)
@@ -70,11 +73,55 @@ final class SimulatorInventoryUITests: XCTestCase {
         assertStaleContextActionsAreDisabled(row: element("installed-app-\(aOnly)"))
         XCTAssertFalse(element("running-operations").exists, "Blocked controls must start no operation")
 
+        // Fixture preparation proves that a real listapps command fails for shut-down B.
+        // The app must report that failure without relabelling A's retained inventory as B.
+        element("load-apps").click()
+        wait(element("error-message"), predicate: "exists == true", timeout: 75)
+        XCTAssertEqual(application.sheets.count, 1)
+        XCTAssertEqual(element("error-message").label, "The simulator is not running.")
+        XCTAssertEqual(element("error-recovery").label, "Start the simulator, then try again.")
+        let dismissError = element("error-dismiss")
+        wait(dismissError, predicate: "exists == true AND hittable == true", timeout: 10)
+        dismissError.click()
+        wait(element("error-message"), predicate: "exists == false", timeout: 10)
+        wait(element("running-operations"), predicate: "exists == false", timeout: 10)
+        XCTAssertTrue(element("installed-app-\(aOnly)").exists)
+        XCTAssertFalse(element("installed-app-\(bOnly)").exists)
+        XCTAssertTrue(element("apps-stale-inventory").exists)
+        XCTAssertEqual(element("inventory-loaded-owner").value as? String, a)
+        XCTAssertEqual(element("apps-inventory-source").value as? String, sourceA)
+        XCTAssertFalse(element("apps-launch").exists, "A failed refresh must clear the previous row selection")
+        try selectApp(aOnly)
+        wait(element("apps-launch"), predicate: "exists == true AND enabled == false", timeout: 10)
+        XCTAssertFalse(element("apps-remove").isEnabled)
+        assertStaleContextActionsAreDisabled(row: element("installed-app-\(aOnly)"))
+        XCTAssertFalse(element("running-operations").exists, "Failed-refresh stale controls must start no operation")
+
+        // Recover through the ordinary Device & DDI Start action, preserving its captured B
+        // target and real bootstatus deadline rather than replacing the inventory response.
+        startSelectedSimulator()
+        XCTAssertEqual(element("inventory-loaded-owner").value as? String, a)
+        XCTAssertEqual(element("apps-inventory-source").value as? String, sourceA)
         loadInventory(containing: bOnly)
         XCTAssertFalse(element("installed-app-\(aOnly)").exists)
         XCTAssertFalse(element("apps-stale-inventory").exists)
+        XCTAssertEqual(element("inventory-loaded-owner").value as? String, b)
         try selectApp(shared)
         wait(element("apps-remove"), predicate: "exists == true AND enabled == true", timeout: 10)
+        let sourceB = try XCTUnwrap(element("apps-inventory-source").value as? String)
+        element("apps-remove").click()
+        wait(element("confirm-button"), predicate: "exists == true AND enabled == false", timeout: 10)
+        XCTAssertEqual(application.sheets.count, 1)
+        let cancelRemoval = element("confirmation-cancel")
+        wait(cancelRemoval, predicate: "exists == true AND hittable == true", timeout: 10)
+        cancelRemoval.click()
+        wait(element("confirm-button"), predicate: "exists == false", timeout: 10)
+        XCTAssertEqual(application.sheets.count, 0)
+        XCTAssertTrue(element("installed-app-\(shared)").exists)
+        XCTAssertEqual(element("inventory-loaded-owner").value as? String, b)
+        XCTAssertEqual(element("apps-inventory-source").value as? String, sourceB)
+        XCTAssertTrue(element("apps-remove").isEnabled)
+        XCTAssertFalse(element("running-operations").exists, "Cancelling removal must start no operation")
         element("apps-remove").click()
         confirmRemoval(on: b)
         wait(element("installed-app-\(shared)"), predicate: "exists == false", timeout: 120)
@@ -133,7 +180,7 @@ final class SimulatorInventoryUITests: XCTestCase {
         XCTAssertEqual(application.sheets.count, 0, "Owned target loss must complete without an error sheet")
         XCTAssertEqual(application.alerts.count, 0)
         XCTAssertFalse(element("installed-app-\(shared)").exists)
-        print("[inventory acceptance] stale controls, B-only removal, delivered late-A rejection, and target-loss confirmation dismissal passed")
+        print("[inventory acceptance] real failed-B refresh with retained A provenance, production B recovery, explicit removal cancellation, stale controls, B-only removal, delivered late-A rejection, and target-loss confirmation dismissal passed")
     }
 
     private func element(_ identifier: String) -> XCUIElement {
@@ -163,6 +210,34 @@ final class SimulatorInventoryUITests: XCTestCase {
         wait(target, predicate: "exists == true AND hittable == true", timeout: 30)
         target.click()
         wait(target, predicate: "exists == false", timeout: 10)
+    }
+
+    private func startSelectedSimulator() {
+        let deviceWorkspace = element("sidebar-device")
+        wait(deviceWorkspace, predicate: "exists == true AND hittable == true", timeout: 10)
+        deviceWorkspace.click()
+        let page = element("workspace-device")
+        wait(page, predicate: "exists == true", timeout: 10)
+        let start = element("simulator-start")
+        wait(start, predicate: "exists == true AND enabled == true", timeout: 10)
+        // The Simulator card follows the device identity and status. Scroll its identified
+        // workspace only until the actual Start button is reachable, without fallback clicks.
+        for _ in 0..<8 {
+            if start.isHittable { break }
+            XCTAssertGreaterThan(page.frame.height, 0)
+            page.scroll(byDeltaX: 0, deltaY: -page.frame.height / 2)
+        }
+        XCTAssertTrue(start.isHittable, "The production simulator Start button must be reachable")
+        start.click()
+        // SimulatorClient.boot uses bootstatus's existing 600-second command deadline.
+        // Allow that operation, process cleanup and the next observed discovery snapshot.
+        wait(start, predicate: "enabled == false", timeout: 630)
+        wait(element("running-operations"), predicate: "exists == false", timeout: 630)
+        XCTAssertEqual(app?.sheets.count, 0, "Production simulator startup must not present an error")
+        let appsWorkspace = element("sidebar-apps")
+        wait(appsWorkspace, predicate: "exists == true AND hittable == true", timeout: 10)
+        appsWorkspace.click()
+        wait(element("installed-apps-table"), predicate: "exists == true", timeout: 10)
     }
 
     private func selectApp(_ bundle: String) throws {

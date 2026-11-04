@@ -68,6 +68,7 @@ final class AppModel {
     let runner: OwnedCommandRunning
 #if DEBUG
     let inventoryAcceptance: InventoryAcceptance?
+    let isDemoInventoryUITesting: Bool
 #endif
     let journal = OperationJournal()
     let discovery: DeviceDiscovery
@@ -142,6 +143,7 @@ final class AppModel {
         let acceptanceRequested = arguments.contains("-inventory-acceptance-a") || arguments.contains("-inventory-acceptance-b") || arguments.contains("-inventory-acceptance-owner")
         let acceptanceError: ToolkitError?
 #if DEBUG
+        isDemoInventoryUITesting = uiTesting && isDemoMode
         do {
             if let targets = try InventoryAcceptanceTargets.parse(arguments: arguments, uiTesting: uiTesting, demoMode: isDemoMode) {
                 let base = ProcessCommandRunner()

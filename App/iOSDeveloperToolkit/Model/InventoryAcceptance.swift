@@ -42,6 +42,19 @@ struct InventoryWindowReadiness: Sendable {
     let mainWindowKey: Bool
     let keyWindowMatchesMain: Bool
 
+    @MainActor
+    static func observe(application: NSApplication) -> InventoryWindowReadiness {
+        let mainWindow: NSWindow? = application.mainWindow
+        let keyWindow: NSWindow? = application.keyWindow
+        return InventoryWindowReadiness(
+            applicationActive: application.isActive,
+            mainWindowPresent: mainWindow != nil,
+            keyWindowPresent: keyWindow != nil,
+            mainWindowKey: mainWindow?.isKeyWindow == true,
+            keyWindowMatchesMain: mainWindow != nil && keyWindow != nil && keyWindow === mainWindow
+        )
+    }
+
     var isReady: Bool {
         applicationActive && mainWindowPresent && keyWindowPresent && mainWindowKey && keyWindowMatchesMain
     }
@@ -84,15 +97,7 @@ final class InventoryAcceptance {
     }
 
     func recordWindowReadiness(application: NSApplication) {
-        let mainWindow: NSWindow? = application.mainWindow
-        let keyWindow: NSWindow? = application.keyWindow
-        windowReadiness = InventoryWindowReadiness(
-            applicationActive: application.isActive,
-            mainWindowPresent: mainWindow != nil,
-            keyWindowPresent: keyWindow != nil,
-            mainWindowKey: mainWindow?.isKeyWindow == true,
-            keyWindowMatchesMain: mainWindow != nil && keyWindow != nil && keyWindow === mainWindow
-        )
+        windowReadiness = .observe(application: application)
     }
 
     func arm() throws(ToolkitError) {

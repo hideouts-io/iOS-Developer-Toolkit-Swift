@@ -217,10 +217,30 @@ final class SmokeUITests: XCTestCase {
         let load = app.buttons["load-apps"]
         XCTAssertTrue(load.waitForExistence(timeout: 5))
         load.click()
-        let row = app.descendants(matching: .any)["installed-app-com.example.sample"]
+        let table = app.descendants(matching: .any)["installed-apps-table"]
+        let names = table.staticTexts.matching(identifier: "installed-app-com.example.sample")
+        let row = names.element
         XCTAssertTrue(row.waitForExistence(timeout: 5))
+        XCTAssertEqual(names.count, 1, "The demo app must resolve to one identified name cell")
         XCTAssertTrue(row.isHittable, "The demo inventory row must be visible before selection")
-        row.click()
+        let nativeRows = table.outlineRows.containing(.any, identifier: "installed-app-com.example.sample")
+        XCTAssertEqual(nativeRows.count, 1, "The identified app must belong to one native outline row")
+        let nativeRow = nativeRows.element
+        let input = app.descendants(matching: .any)["demo-inventory-input"]
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND value CONTAINS 'window-ready: true'"), object: input)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed,
+                       "Observe the actual key/main window before the single inventory click")
+        try attachDemoInventoryInput(phase: "before click", input: input, row: nativeRow)
+        let window = app.windows["main-AppWindow-1"]
+        XCTAssertTrue(window.exists)
+        XCTAssertGreaterThan(row.frame.width, 0)
+        XCTAssertGreaterThan(row.frame.height, 0)
+        XCTAssertTrue(window.frame.contains(CGPoint(x: row.frame.midX, y: row.frame.midY)))
+        row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        try attachDemoInventoryInput(phase: "after click", input: input, row: nativeRow)
+        let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: nativeRow)
+        XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 5), .completed,
+                       "The single click must select the actual native outline row")
 
         let launch = app.buttons["apps-launch"]
         let remove = app.buttons["apps-remove"]
@@ -229,10 +249,8 @@ final class SmokeUITests: XCTestCase {
         XCTAssertFalse(launch.isEnabled, "Demo app inventory must not authorize Launch")
         XCTAssertFalse(remove.isEnabled, "Demo app inventory must not authorize Remove")
 
-        let table = app.descendants(matching: .any)["installed-apps-table"]
         XCTAssertEqual(table.outlineRows.count, 1, "The demo inventory must expose exactly one visible row")
-        let menuRow = table.outlineRows.element(boundBy: 0)
-        XCTAssertTrue(menuRow.isHittable, "The native inventory row must be reachable before opening its menu")
+        XCTAssertTrue(row.isHittable, "The identified cell must be reachable before opening its menu")
         row.rightClick()
         // SwiftUI's native menu omits identifiers on disabled items. Anchor the observed
         // menu hierarchy to this table's stable ID and verify its complete action order.
@@ -247,6 +265,20 @@ final class SmokeUITests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertFalse(app.buttons["running-operations"].exists, "Inspecting blocked app actions must not start an operation")
         attachScreenshot("demo-app-actions-blocked")
+    }
+
+    private func attachDemoInventoryInput(phase: String, input: XCUIElement, row: XCUIElement) throws {
+        let trace = try XCTUnwrap(input.value as? String)
+        let attachment = XCTAttachment(string: "\(phase): selected=\(row.isSelected); \(trace)")
+        attachment.name = "demo-inventory-\(phase)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        let window = app.windows["main-AppWindow-1"]
+        XCTAssertTrue(window.exists)
+        let screenshot = XCTAttachment(screenshot: window.screenshot())
+        screenshot.name = "demo-inventory-window-\(phase)"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     func testCommandCategoriesExposeExistingActionsWithoutExecuting() throws {

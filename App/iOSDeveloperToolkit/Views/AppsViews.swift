@@ -10,12 +10,25 @@ import Combine
 struct AppsView: View {
     @Environment(AppModel.self) private var model
     @State private var confirmation: PendingConfirmation?
+#if DEBUG
+    @State private var demoWindowReadiness: InventoryWindowReadiness?
+#endif
 
     var body: some View {
         @Bindable var apps = model.apps
         VStack(alignment: .leading, spacing: 12) {
             TargetHeader()
 #if DEBUG
+            if model.isDemoInventoryUITesting {
+                Text("Inventory input")
+                    .font(.caption)
+                    .accessibilityIdentifier("demo-inventory-input")
+                    .accessibilityValue(Text(verbatim: "\(demoWindowReadiness.map(\.diagnostic) ?? "window-readiness: unobserved"); current: \(apps.selection.sorted().joined(separator: ",")); loading: \(apps.isLoading)"))
+                    .onAppear { demoWindowReadiness = .observe(application: .shared) }
+                    .onReceive(inventoryWindowReadinessEvents) { _ in
+                        demoWindowReadiness = .observe(application: .shared)
+                    }
+            }
             if let acceptance = model.inventoryAcceptance {
                 HStack {
                     Button("Arm inventory acceptance") {

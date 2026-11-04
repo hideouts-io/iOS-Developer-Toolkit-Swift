@@ -101,10 +101,12 @@ struct CommandRunnerTests {
         defer { close(descriptor) }
         // The child acknowledges SIGTERM but waits for a test-controlled release before exit.
         // A FIFO makes each assertion depend on a real process state rather than a delay.
+        // Only the owned shell's TERM handling is under test; its idle child is fixture cleanup.
         let script = """
-        trap 'printf "cancel received\\n"; IFS= read -r release < "$1"; printf "after release\\n"; exit 0' TERM
+        trap 'printf "cancel received\\n"; IFS= read -r release < "$1"; kill -KILL "$child" 2>/dev/null; wait "$child" 2>/dev/null; printf "after release\\n"; exit 0' TERM
+        sleep 30 & child=$!
         printf 'ready:%s\\n' "$$"
-        IFS= read -r hold < "$1"
+        wait "$child"
         exit 1
         """
         let request = CommandRequest(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", script, "owned-command", barrier.path],

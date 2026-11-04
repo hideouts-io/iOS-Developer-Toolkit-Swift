@@ -256,6 +256,7 @@ struct ConfirmationSheet: View {
             }
             if requirement.requiresBackupAcknowledgement {
                 Toggle("I have a current backup and understand this cannot be undone", isOn: $backupAcknowledged)
+                    .accessibilityIdentifier("confirmation-backup-acknowledgement")
             }
             if let phrase = requirement.phrase {
                 VStack(alignment: .leading, spacing: 6) {
@@ -272,6 +273,7 @@ struct ConfirmationSheet: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("confirmation-cancel")
                 Button(requirement.risk == .readOnly ? "Run" : "Continue") {
                     dismiss()
                     onConfirm()
@@ -297,8 +299,10 @@ struct ErrorSheet: View {
                 .font(.title2.bold())
                 .foregroundStyle(.orange)
             Text(error.message).font(.body).fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("error-message")
             if let recovery = error.recovery {
                 Text(recovery).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("error-recovery")
             }
             if let details = error.details, !details.isEmpty {
                 DisclosureGroup("Technical details") {
@@ -316,11 +320,11 @@ struct ErrorSheet: View {
             HStack {
                 Spacer()
                 Button("OK") { dismiss() }.keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("error-dismiss")
             }
         }
         .padding(20)
         .frame(width: 520)
-        .accessibilityIdentifier("error-sheet")
     }
 }
 

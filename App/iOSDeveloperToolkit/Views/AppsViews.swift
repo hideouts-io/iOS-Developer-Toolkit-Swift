@@ -121,6 +121,11 @@ struct InstallAppView: View {
 #if DEBUG
             if model.packageAcceptanceTarget != nil {
                 VStack(alignment: .leading, spacing: 2) {
+                    let targets = model.simulatorDevices
+                    Text(model.snapshot.simulators.isAvailable && targets.count == 1 && targets.first?.simulatorState == .booted ? "ready" : "waiting")
+                        .accessibilityIdentifier("package-target-readiness")
+                    Text(model.snapshot.simulators.summary)
+                        .accessibilityIdentifier("package-discovery-status")
                     Text(install.preparedPackage?.directory.path ?? "none")
                         .accessibilityIdentifier("package-prepared-directory")
                     Text(install.preparedPackage?.id.uuidString ?? "none")

@@ -62,8 +62,10 @@ final class PackageInspectionUITests: XCTestCase {
         app.activate()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
         XCTAssertFalse(element("demo-banner").exists)
-        wait(element("connection-summary"), predicate: "exists == true AND NOT (label CONTAINS 'Simulators: Not checked yet')", timeout: 75)
-        XCTAssertNotNil(element("connection-summary").label.range(of: "Simulators: [1-9][0-9]* devices", options: .regularExpression))
+        let readiness = element("package-target-readiness")
+        attachReadiness("package-discovery-before-wait")
+        wait(readiness, predicate: "exists == true AND value == 'ready'", timeout: 75)
+        attachReadiness("package-owned-target-ready")
         let picker = element("target-picker")
         wait(picker, predicate: "exists == true AND hittable == true", timeout: 10)
         picker.click()
@@ -171,8 +173,29 @@ final class PackageInspectionUITests: XCTestCase {
 
     private func wait(_ control: XCUIElement, predicate: String, timeout: TimeInterval) {
         let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: predicate), object: control)
-        XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: timeout), .completed,
+        let result = XCTWaiter.wait(for: [expectation], timeout: timeout)
+        if result != .completed, let application, application.state != .notRunning {
+            attachReadiness("package-wait-readiness")
+            attach(application.debugDescription, name: "package-wait-native-hierarchy")
+        }
+        XCTAssertEqual(result, .completed,
                        "The native control did not satisfy \(predicate): \(control)")
+    }
+
+    private func attachReadiness(_ name: String) {
+        let summary = element("connection-summary")
+        let label = summary.exists ? String(summary.label.prefix(4096)) : "<absent>"
+        let summaryValue = diagnosticValue("connection-summary")
+        let readiness = diagnosticValue("package-target-readiness")
+        let status = diagnosticValue("package-discovery-status")
+        attach("label: \(label)\nvalue: \(summaryValue)\nowned-target: \(readiness)\nsource-status: \(status)", name: name)
+    }
+
+    private func diagnosticValue(_ identifier: String) -> String {
+        let control = element(identifier)
+        guard control.exists else { return "<absent>" }
+        guard let value = control.value as? String else { return "<no String value>" }
+        return String(value.prefix(4096))
     }
 
     private func requirePreparation(original: String) throws -> Preparation {

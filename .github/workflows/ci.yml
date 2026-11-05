@@ -81,12 +81,6 @@ jobs:
             echo "::error::The build has warnings."
             exit 1
           fi
-      - name: UI tests
-        run: |
-          xcodebuild -project iOSDeveloperToolkit.xcodeproj -scheme iOSDeveloperToolkit \
-            -configuration Debug -destination 'platform=macOS' \
-            -derivedDataPath "$RUNNER_TEMP/dd" -resultBundlePath "$RUNNER_TEMP/UITests.xcresult" \
-            test-without-building
       - name: Observe native package file panels
         env:
           TEST_RUNNER_IDT_PACKAGE_UI_TESTS: "1"
@@ -95,6 +89,19 @@ jobs:
             -configuration Debug -destination 'platform=macOS' \
             -derivedDataPath "$RUNNER_TEMP/dd" -resultBundlePath "$RUNNER_TEMP/PackageUITests.xcresult" \
             -only-testing:iOSDeveloperToolkitUITests/PackageInspectionUITests test-without-building
+      - name: Retain native package panel observations
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: package-panel-observations
+          path: ${{ runner.temp }}/PackageUITests.xcresult
+          if-no-files-found: error
+      - name: UI tests
+        run: |
+          xcodebuild -project iOSDeveloperToolkit.xcodeproj -scheme iOSDeveloperToolkit \
+            -configuration Debug -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/dd" -resultBundlePath "$RUNNER_TEMP/UITests.xcresult" \
+            test-without-building
       - name: Render every page at the default and minimum window sizes
         run: |
           scripts/check-layout.sh \

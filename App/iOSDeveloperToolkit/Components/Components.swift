@@ -353,12 +353,6 @@ enum FilePanels {
 
     static func chooseFile(title: String, allowedExtensions: [String], directory: URL? = nil) -> URL? {
         let panel = NSOpenPanel()
-        panel.identifier = NSUserInterfaceItemIdentifier("file-open-panel")
-        panel.setAccessibilityIdentifier("file-open-panel")
-        if let confirmView = panel.defaultButtonCell?.controlView {
-            confirmView.identifier = NSUserInterfaceItemIdentifier("file-open-confirm")
-            confirmView.setAccessibilityIdentifier("file-open-confirm")
-        }
         panel.title = title
         panel.canChooseFiles = true
         panel.canChooseDirectories = allowedExtensions.contains("app")

@@ -28,7 +28,8 @@ final class PackageInspectionUITests: XCTestCase {
         XCTAssertTrue(choose.waitForExistence(timeout: 10))
         XCTAssertTrue(choose.isHittable)
         choose.click()
-        let panel = app.descendants(matching: .any)["file-open-panel"]
+        attach(app.debugDescription, name: "package-before-native-panel-lookup")
+        let panel = app.descendants(matching: .any)["open-panel"]
         XCTAssertTrue(panel.waitForExistence(timeout: 10))
         attach(app.debugDescription, name: "package-native-open-panel")
         let fields = app.textFields.count

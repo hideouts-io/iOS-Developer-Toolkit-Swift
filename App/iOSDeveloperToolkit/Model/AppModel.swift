@@ -6,6 +6,32 @@ import SwiftUI
 import ToolkitCore
 import ToolkitFeatures
 
+#if DEBUG
+/// Restricts package acceptance to the simulator created by its owning fixture run.
+struct PackageAcceptanceTarget: Sendable {
+    let simulator: String
+    let owner: String
+
+    static func parse(arguments: [String], uiTesting: Bool, demoMode: Bool) throws(ToolkitError) -> PackageAcceptanceTarget? {
+        let simulatorFlags = arguments.indices.filter { arguments[$0] == "-package-acceptance-simulator" }
+        let ownerFlags = arguments.indices.filter { arguments[$0] == "-package-acceptance-owner" }
+        guard !simulatorFlags.isEmpty || !ownerFlags.isEmpty else { return nil }
+        guard uiTesting, !demoMode, simulatorFlags.count == 1, ownerFlags.count == 1,
+              let simulatorIndex = simulatorFlags.first, arguments.indices.contains(simulatorIndex + 1),
+              let ownerIndex = ownerFlags.first, arguments.indices.contains(ownerIndex + 1),
+              let simulator = UUID(uuidString: arguments[simulatorIndex + 1]),
+              let owner = UUID(uuidString: arguments[ownerIndex + 1]) else {
+            throw ToolkitError(.invalidInput, message: "Package acceptance requires a simulator UUID and an owner UUID.", recovery: "Use a Debug build with -ui-testing YES, -demo-mode NO and one value for each package acceptance target and owner.", technicalDetail: nil)
+        }
+        return PackageAcceptanceTarget(simulator: simulator.uuidString, owner: owner.uuidString)
+    }
+
+    func contains(_ device: Device) -> Bool {
+        device.kind == .simulator && device.udid.uppercased() == simulator && device.name == "IDT Package \(owner)"
+    }
+}
+#endif
+
 /// An error ready for an alert: plain message first, technical details on request.
 struct PresentedError: Identifiable, Equatable {
     let id = UUID()
@@ -68,6 +94,9 @@ final class AppModel {
     let runner: OwnedCommandRunning = ProcessCommandRunner()
     let journal = OperationJournal()
     let discovery: DeviceDiscovery
+#if DEBUG
+    let packageAcceptanceTarget: PackageAcceptanceTarget?
+#endif
     /// A fresh executor carries the current developer-image folders.
     var executor: ActionExecutor { ActionExecutor(runner: runner, developerImageFolders: developerImage.folders) }
     let logger = ToolkitLog.application
@@ -131,11 +160,28 @@ final class AppModel {
         }
         let uiTesting = flag("-ui-testing") ?? false
         let forceDemo = flag("-demo-mode") ?? false
-        demoMode = forceDemo || (!uiTesting && UserDefaults.standard.bool(forKey: "demoMode"))
+        let isDemoMode = forceDemo || (!uiTesting && UserDefaults.standard.bool(forKey: "demoMode"))
+        demoMode = isDemoMode
         selectedDeviceID = forceDemo ? DemoMode.device.id : UserDefaults.standard.string(forKey: "selectedDeviceID")
-        // UI tests run without touching real discovery sources.
-        let configuration: DeviceDiscovery.Configuration = uiTesting
-            ? .init(usbmux: USBMuxClient(socketPath: "/nonexistent/ui-testing-usbmuxd"), coreDevice: nil, simulators: nil, enrichWithLockdown: false)
+        let acceptanceRequested = arguments.contains("-package-acceptance-simulator") || arguments.contains("-package-acceptance-owner")
+        let acceptanceError: ToolkitError?
+        let acceptanceSimulators: SimulatorClient?
+#if DEBUG
+        do {
+            packageAcceptanceTarget = try PackageAcceptanceTarget.parse(arguments: arguments, uiTesting: uiTesting, demoMode: isDemoMode)
+            acceptanceError = nil
+        } catch {
+            packageAcceptanceTarget = nil
+            acceptanceError = error
+        }
+        acceptanceSimulators = packageAcceptanceTarget == nil ? nil : SimulatorClient(runner: runner)
+#else
+        acceptanceSimulators = nil
+        acceptanceError = acceptanceRequested ? ToolkitError(.unsupported, message: "Package acceptance requires a Debug build.", recovery: "Build the Debug configuration and rerun the native acceptance test.", technicalDetail: nil) : nil
+#endif
+        // UI tests exclude physical discovery; only explicit package acceptance enables simulators.
+        let configuration: DeviceDiscovery.Configuration = uiTesting || acceptanceRequested
+            ? .init(usbmux: USBMuxClient(socketPath: "/nonexistent/ui-testing-usbmuxd"), coreDevice: nil, simulators: acceptanceSimulators, enrichWithLockdown: false)
             : .init()
         discovery = DeviceDiscovery(configuration: configuration)
         developerImage = DeveloperImageModel()
@@ -151,6 +197,7 @@ final class AppModel {
         if let destination = arguments.firstIndex(of: "-workspace").flatMap({ arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil }).flatMap(Workspace.init(rawValue:)) {
             workspace = destination
         }
+        if let acceptanceError { presentedError = PresentedError(acceptanceError) }
     }
 
     // MARK: Lifecycle
@@ -217,7 +264,12 @@ final class AppModel {
     // MARK: Devices
 
     var allDevices: [Device] {
-        demoMode ? [DemoMode.device] + snapshot.devices : snapshot.devices
+#if DEBUG
+        if let packageAcceptanceTarget {
+            return snapshot.devices.filter { packageAcceptanceTarget.contains($0) }
+        }
+#endif
+        return demoMode ? [DemoMode.device] + snapshot.devices : snapshot.devices
     }
 
     var physicalDevices: [Device] { allDevices.filter { $0.kind == .physical || $0.kind == .demo } }

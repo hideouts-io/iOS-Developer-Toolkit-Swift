@@ -87,6 +87,14 @@ jobs:
             -configuration Debug -destination 'platform=macOS' \
             -derivedDataPath "$RUNNER_TEMP/dd" -resultBundlePath "$RUNNER_TEMP/UITests.xcresult" \
             test-without-building
+      - name: Observe native package file panels
+        env:
+          TEST_RUNNER_IDT_PACKAGE_UI_TESTS: "1"
+        run: |
+          xcodebuild -project iOSDeveloperToolkit.xcodeproj -scheme iOSDeveloperToolkit \
+            -configuration Debug -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/dd" -resultBundlePath "$RUNNER_TEMP/PackageUITests.xcresult" \
+            -only-testing:iOSDeveloperToolkitUITests/PackageInspectionUITests test-without-building
       - name: Render every page at the default and minimum window sizes
         run: |
           scripts/check-layout.sh \
@@ -98,6 +106,7 @@ jobs:
           name: ui-test-results
           path: |
             ${{ runner.temp }}/UITests.xcresult
+            ${{ runner.temp }}/PackageUITests.xcresult
             ${{ runner.temp }}/layout
           if-no-files-found: ignore
 

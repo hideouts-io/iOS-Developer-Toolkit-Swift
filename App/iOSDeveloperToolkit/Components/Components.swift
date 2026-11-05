@@ -238,12 +238,15 @@ struct ConfirmationSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text(title).font(.title2.bold())
+                    .accessibilityIdentifier("confirmation-title")
                 Spacer()
                 RiskBadge(risk: requirement.risk)
             }
             Text(detail).fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("confirmation-detail")
             if let target {
                 InfoRow("Target", "\(target.name) — \(target.kind.label)")
+                    .accessibilityIdentifier("confirmation-target")
                 InfoRow("UDID", target.udid, monospaced: true)
             }
             if let commandPreview {
@@ -272,6 +275,7 @@ struct ConfirmationSheet: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("confirmation-cancel")
                 Button(requirement.risk == .readOnly ? "Run" : "Continue") {
                     dismiss()
                     onConfirm()
@@ -297,8 +301,10 @@ struct ErrorSheet: View {
                 .font(.title2.bold())
                 .foregroundStyle(.orange)
             Text(error.message).font(.body).fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("error-message")
             if let recovery = error.recovery {
                 Text(recovery).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("error-recovery")
             }
             if let details = error.details, !details.isEmpty {
                 DisclosureGroup("Technical details") {
@@ -316,11 +322,11 @@ struct ErrorSheet: View {
             HStack {
                 Spacer()
                 Button("OK") { dismiss() }.keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("error-dismiss")
             }
         }
         .padding(20)
         .frame(width: 520)
-        .accessibilityIdentifier("error-sheet")
     }
 }
 
@@ -347,6 +353,12 @@ enum FilePanels {
 
     static func chooseFile(title: String, allowedExtensions: [String], directory: URL? = nil) -> URL? {
         let panel = NSOpenPanel()
+        panel.identifier = NSUserInterfaceItemIdentifier("file-open-panel")
+        panel.setAccessibilityIdentifier("file-open-panel")
+        if let confirmView = panel.defaultButtonCell?.controlView {
+            confirmView.identifier = NSUserInterfaceItemIdentifier("file-open-confirm")
+            confirmView.setAccessibilityIdentifier("file-open-confirm")
+        }
         panel.title = title
         panel.canChooseFiles = true
         panel.canChooseDirectories = allowedExtensions.contains("app")

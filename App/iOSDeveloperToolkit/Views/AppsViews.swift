@@ -114,9 +114,27 @@ struct InstallAppView: View {
                     .accessibilityIdentifier("choose-package")
                     if let url = install.packageURL {
                         Text(url.lastPathComponent).font(.callout.monospaced()).lineLimit(1).truncationMode(.middle)
+                            .accessibilityIdentifier("package-selection")
                     }
                 }
             }
+#if DEBUG
+            if model.packageAcceptanceTarget != nil {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(install.preparedPackage?.directory.path ?? "none")
+                        .accessibilityIdentifier("package-prepared-directory")
+                    Text(install.preparedPackage?.id.uuidString ?? "none")
+                        .accessibilityIdentifier("package-prepared-id")
+                    Text(install.preparedPackage?.originalURL.path ?? "none")
+                        .accessibilityIdentifier("package-original-url")
+                    Text(String(model.operations.count))
+                        .accessibilityIdentifier("package-active-operations")
+                }
+                .font(.caption.monospaced())
+                .lineLimit(1)
+                .truncationMode(.middle)
+            }
+#endif
             if install.isInspecting {
                 ProgressView("Inspecting the selected package…")
                     .accessibilityIdentifier("package-inspection-running")

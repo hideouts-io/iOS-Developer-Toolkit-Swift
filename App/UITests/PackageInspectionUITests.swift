@@ -155,9 +155,10 @@ final class PackageInspectionUITests: XCTestCase {
         field.typeText(path)
         XCTAssertEqual(try XCTUnwrap(field.value as? String), path)
         field.typeKey(.return, modifierFlags: [])
-        wait(goTo, predicate: "exists == false", timeout: 5)
+        wait(application!.textFields["PathTextField"], predicate: "exists == false", timeout: 5)
         let open = panel.buttons["OKButton"]
         wait(open, predicate: "exists == true AND enabled == true AND hittable == true", timeout: 10)
+        XCTAssertEqual(try value("package-target-readiness"), "ready", "Choosing a local package must preserve the owned simulator target")
         attach(application!.debugDescription, name: "package-native-selected-input")
         open.click()
         wait(panel, predicate: "exists == false", timeout: 10)

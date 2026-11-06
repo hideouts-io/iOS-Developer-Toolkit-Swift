@@ -222,8 +222,10 @@ final class PackageInspectionUITests: XCTestCase {
         panel.typeKey("g", modifierFlags: [.command, .shift])
         let goTo = panel.descendants(matching: .any)["GoToWindow"]
         wait(goTo, predicate: "exists == true", timeout: 5)
-        let field = goTo.textFields["PathTextField"]
+        let fields = application!.textFields.matching(identifier: "PathTextField")
+        let field = fields.element
         wait(field, predicate: "exists == true AND hittable == true", timeout: 5)
+        XCTAssertEqual(fields.count, 1, "The native Go to Folder field must resolve uniquely from the application")
         field.click()
         field.typeKey("a", modifierFlags: [.command])
         field.typeText(path)

@@ -11,6 +11,7 @@ final class PackageInspectionUITests: XCTestCase {
         let simulator: String
         let owner: String
         let valid: String
+        let validB: String
         let invalid: String
 
         static func load(environment: [String: String]) throws -> Fixtures {
@@ -18,15 +19,17 @@ final class PackageInspectionUITests: XCTestCase {
             let owner = try XCTUnwrap(environment["IDT_PACKAGE_FIXTURE_OWNER"])
             let directory = try XCTUnwrap(environment["IDT_PACKAGE_FIXTURE_DIRECTORY"])
             let valid = try XCTUnwrap(environment["IDT_PACKAGE_FIXTURE_VALID"])
+            let validB = try XCTUnwrap(environment["IDT_PACKAGE_FIXTURE_VALID_B"])
             let invalid = try XCTUnwrap(environment["IDT_PACKAGE_FIXTURE_INVALID"])
             XCTAssertEqual(UUID(uuidString: simulator)?.uuidString, simulator)
             XCTAssertEqual(UUID(uuidString: owner)?.uuidString, owner)
             let root = URL(fileURLWithPath: directory, isDirectory: true).standardizedFileURL
             XCTAssertTrue(directory.hasPrefix("/"))
-            XCTAssertTrue([directory, valid, invalid].allSatisfy { $0.utf8.count <= 4096 && !$0.contains("\0") && !$0.contains("\n") && !$0.contains("\r") })
+            XCTAssertTrue([directory, valid, validB, invalid].allSatisfy { $0.utf8.count <= 4096 && !$0.contains("\0") && !$0.contains("\n") && !$0.contains("\r") })
             XCTAssertEqual(valid, root.appendingPathComponent("ValidSimulator.app").path)
+            XCTAssertEqual(validB, root.appendingPathComponent("ValidSimulatorB.app").path)
             XCTAssertEqual(invalid, root.appendingPathComponent("Malformed.ipa").path)
-            return Fixtures(simulator: simulator, owner: owner, valid: valid, invalid: invalid)
+            return Fixtures(simulator: simulator, owner: owner, valid: valid, validB: validB, invalid: invalid)
         }
     }
 
@@ -76,7 +79,7 @@ final class PackageInspectionUITests: XCTestCase {
         XCTAssertFalse(element("install-package").exists)
 
         try choosePackage(fixtures.valid)
-        let first = try requirePreparation(original: fixtures.valid)
+        let first = try requirePreparation(original: fixtures.valid, activeOperations: 0)
         XCTAssertEqual(try value("package-selection"), "ValidSimulator.app")
         XCTAssertFalse(element("package-inspection-failed").exists)
         attachState("package-first-valid")
@@ -102,7 +105,7 @@ final class PackageInspectionUITests: XCTestCase {
         attachState("package-malformed-denied")
 
         try choosePackage(fixtures.valid)
-        let recovered = try requirePreparation(original: fixtures.valid)
+        let recovered = try requirePreparation(original: fixtures.valid, activeOperations: 0)
         XCTAssertNotEqual(recovered.directory, first.directory)
         XCTAssertNotEqual(recovered.identifier, first.identifier)
         XCTAssertFalse(element("package-inspection-failed").exists)
@@ -128,13 +131,84 @@ final class PackageInspectionUITests: XCTestCase {
         try requirePrivateDirectory(recovered.directory)
         attachState("package-cancel-preserved")
 
+        // Only completion order is controlled. A and B both perform genuine native inspection.
+        let arm = element("package-completion-arm")
+        reveal(arm)
+        XCTAssertTrue(arm.isEnabled)
+        arm.click()
+        wait(element("package-completion-state"), predicate: "value == 'armed'", timeout: 5)
+        try choosePackage(fixtures.valid)
+        wait(element("package-completion-state"), predicate: "value == 'held'", timeout: 120)
+        let late = try heldPreparation(original: fixtures.valid)
+        XCTAssertNotEqual(late.directory, recovered.directory)
+        XCTAssertNotEqual(late.identifier, recovered.identifier)
+        try requireAbsent(recovered.directory)
+        XCTAssertEqual(try value("package-prepared-id"), "none")
+        XCTAssertEqual(try value("package-selection"), "ValidSimulator.app")
+        wait(install, predicate: "exists == true AND enabled == false", timeout: 10)
+        wait(element("package-active-operations"), predicate: "value == '1'", timeout: 10)
+        XCTAssertTrue(element("package-inspection-running").exists)
+        attachState("package-completed-a-held")
+
+        try choosePackage(fixtures.validB)
+        let current = try requirePreparation(original: fixtures.validB, activeOperations: 1)
+        XCTAssertEqual(try value("package-selection"), "ValidSimulatorB.app")
+        XCTAssertNotEqual(current.directory, late.directory)
+        XCTAssertNotEqual(current.identifier, late.identifier)
+        XCTAssertEqual(try value("package-completion-state"), "held")
+        XCTAssertEqual(try value("package-held-cancelled"), "pending")
+        try requirePrivateDirectory(late.directory)
+        attachState("package-b-ready-a-held")
+
+        let release = element("package-completion-release")
+        reveal(release)
+        XCTAssertTrue(release.isEnabled)
+        release.click()
+        wait(element("package-completion-state"), predicate: "value == 'delivered'", timeout: 10)
+        XCTAssertEqual(try value("package-held-cancelled"), "true", "A's actual inspection work task must observe the cancellation caused by selecting B")
+        wait(element("package-active-operations"), predicate: "value == '0'", timeout: 10)
+        try requireAbsent(late.directory)
+        XCTAssertEqual(try value("package-prepared-directory"), current.directory)
+        XCTAssertEqual(try value("package-prepared-id"), current.identifier)
+        XCTAssertEqual(try value("package-original-url"), fixtures.validB)
+        XCTAssertEqual(try value("package-selection"), "ValidSimulatorB.app")
+        XCTAssertFalse(element("package-inspection-running").exists)
+        XCTAssertFalse(element("package-inspection-failed").exists)
+        XCTAssertFalse(element("error-message").exists)
+        XCTAssertTrue(install.isEnabled)
+        XCTAssertFalse(element("running-operations").exists)
+        try requirePrivateDirectory(current.directory)
+        attachState("package-late-a-disposed-b-preserved")
+
+        reveal(install)
+        install.click()
+        wait(element("confirmation-detail"), predicate: "exists == true", timeout: 10)
+        XCTAssertEqual(try value("confirmation-title"), "Install Package Fixture B?")
+        XCTAssertEqual(try value("confirmation-detail"), "ValidSimulatorB.app will be installed on IDT Package \(fixtures.owner). iOS still checks the signature, provisioning, and entitlements.")
+        XCTAssertEqual(app.sheets.count, 1)
+        wait(element("confirm-button"), predicate: "exists == true AND enabled == false", timeout: 10)
+        XCTAssertTrue(element("confirmation-field").exists)
+        attachState("package-b-confirmation-after-late-a")
+        wait(cancel, predicate: "exists == true AND hittable == true", timeout: 10)
+        cancel.click()
+        wait(element("confirm-button"), predicate: "exists == false", timeout: 10)
+        XCTAssertEqual(app.sheets.count, 0)
+        XCTAssertEqual(try value("package-prepared-directory"), current.directory)
+        XCTAssertEqual(try value("package-prepared-id"), current.identifier)
+        XCTAssertTrue(install.isEnabled)
+        XCTAssertFalse(element("running-operations").exists)
+        try requirePrivateDirectory(current.directory)
+        attachState("package-b-cancel-preserved")
+
         // Normal Quit exercises AppDelegate's termination reply and production cleanup.
         // terminate() in tearDown is failure cleanup and cannot establish this assertion.
         app.typeKey("q", modifierFlags: [.command])
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 15), "Normal Command-Q must exit after removing its idle prepared package")
         try requireAbsent(first.directory)
         try requireAbsent(recovered.directory)
-        let data = try JSONEncoder().encode(CleanupReceipt(preparedDirectories: [first.directory, recovered.directory]))
+        try requireAbsent(late.directory)
+        try requireAbsent(current.directory)
+        let data = try JSONEncoder().encode(CleanupReceipt(preparedDirectories: [first.directory, recovered.directory, late.directory, current.directory]))
         attach(String(decoding: data, as: UTF8.self), name: "package-cleanup-receipt")
     }
 
@@ -199,9 +273,9 @@ final class PackageInspectionUITests: XCTestCase {
         return String(value.prefix(4096))
     }
 
-    private func requirePreparation(original: String) throws -> Preparation {
+    private func requirePreparation(original: String, activeOperations: Int) throws -> Preparation {
         wait(element("package-prepared-id"), predicate: "exists == true AND value != 'none'", timeout: 120)
-        wait(element("package-active-operations"), predicate: "value == '0'", timeout: 10)
+        wait(element("package-active-operations"), predicate: "value == '\(activeOperations)'", timeout: 10)
         wait(element("install-package"), predicate: "exists == true AND enabled == true", timeout: 10)
         XCTAssertFalse(element("package-inspection-running").exists)
         XCTAssertFalse(element("error-message").exists)
@@ -210,12 +284,26 @@ final class PackageInspectionUITests: XCTestCase {
         let identifier = try value("package-prepared-id")
         XCTAssertEqual(UUID(uuidString: identifier)?.uuidString, identifier)
         try requirePrivateDirectory(directory)
-        let copy = URL(fileURLWithPath: directory).appendingPathComponent("ValidSimulator.app")
+        try requirePackageCopy(directory: directory, original: original)
+        return Preparation(directory: directory, identifier: identifier)
+    }
+
+    private func heldPreparation(original: String) throws -> Preparation {
+        XCTAssertEqual(try value("package-held-original-url"), original)
+        let directory = try value("package-held-directory")
+        let identifier = try value("package-held-id")
+        XCTAssertEqual(UUID(uuidString: identifier)?.uuidString, identifier)
+        try requirePrivateDirectory(directory)
+        try requirePackageCopy(directory: directory, original: original)
+        return Preparation(directory: directory, identifier: identifier)
+    }
+
+    private func requirePackageCopy(directory: String, original: String) throws {
+        let copy = URL(fileURLWithPath: directory).appendingPathComponent(URL(fileURLWithPath: original).lastPathComponent)
         var metadata = stat()
         XCTAssertEqual(lstat(copy.path, &metadata), 0, "The actual private package copy must exist while the app is alive")
         XCTAssertEqual(metadata.st_mode & S_IFMT, S_IFDIR)
         XCTAssertNotEqual(copy.path, original)
-        return Preparation(directory: directory, identifier: identifier)
     }
 
     private func requirePrivateDirectory(_ path: String) throws {

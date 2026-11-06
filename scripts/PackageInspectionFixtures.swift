@@ -43,8 +43,10 @@ struct PackageInspectionFixtures {
     }
 
     static let validName = "ValidSimulator.app"
+    static let validBName = "ValidSimulatorB.app"
     static let invalidName = "Malformed.ipa"
     static let fixtureBundle = "io.hideouts.idt.package.fixture"
+    static let fixtureBBundle = "io.hideouts.idt.package.fixture.b"
 
     static func main() async throws {
         let arguments = CommandLine.arguments
@@ -85,15 +87,16 @@ struct PackageInspectionFixtures {
         try await register(manifest, directory: directory, runner: runner)
         _ = try await command(["simctl", "bootstatus", identifier, "-b"], timeout: 600, runner: runner)
         try await requireOwnedSimulator(manifest, runner: runner)
-        let app = try await fixture(directory: directory, runner: runner)
+        let app = try await fixture(directory: directory, name: validName, bundle: fixtureBundle, displayName: "Package Fixture", runner: runner)
+        let appB = try await fixture(directory: directory, name: validBName, bundle: fixtureBBundle, displayName: "Package Fixture B", runner: runner)
         let malformed = directory.appendingPathComponent(invalidName)
         try SecureFileIO.writeNewFile(Data("This is deliberately not a ZIP archive.\n".utf8), to: malformed, mode: 0o600)
-        let sources = try [validName, invalidName].map { name in
+        let sources = try [validName, validBName, invalidName].map { name in
             SourceDigest(path: name, sha256: try digest(directory.appendingPathComponent(name)))
         }
         let inventory = try await inventory(identifier: identifier, runner: runner)
-        guard !inventory.contains(fixtureBundle) else {
-            throw failure("The new simulator already contains the acceptance package; installation cancellation cannot be measured.", cause: nil)
+        guard !inventory.contains(fixtureBundle), !inventory.contains(fixtureBBundle) else {
+            throw failure("The new simulator already contains an acceptance package; installation cancellation cannot be measured.", cause: nil)
         }
         manifest = Manifest(owner: owner, simulator: identifier, sources: sources, inventory: inventory, existingPreparations: existingPreparations)
         try save(manifest, directory: directory)
@@ -102,6 +105,7 @@ struct PackageInspectionFixtures {
             "IDT_PACKAGE_FIXTURE_SIMULATOR": identifier,
             "IDT_PACKAGE_FIXTURE_OWNER": owner,
             "IDT_PACKAGE_FIXTURE_VALID": app.path,
+            "IDT_PACKAGE_FIXTURE_VALID_B": appB.path,
             "IDT_PACKAGE_FIXTURE_INVALID": malformed.path,
         ]
         guard environment.values.allSatisfy({ !$0.contains("\n") && !$0.contains("\r") }) else {
@@ -109,13 +113,13 @@ struct PackageInspectionFixtures {
         }
         let lines = environment.sorted(by: { $0.key < $1.key }).map { "\($0.key)=\($0.value)\n" }.joined()
         try SecureFileIO.writeNewFile(Data(lines.utf8), to: directory.appendingPathComponent("environment.env"), mode: 0o600)
-        print("[package fixtures] One owner-matched booted simulator, a genuine signed simulator app, malformed IPA and source/inventory baselines are ready.")
+        print("[package fixtures] One owner-matched booted simulator, two distinct genuine signed simulator apps, malformed IPA and source/inventory baselines are ready.")
     }
 
     static func verifyCleanup(directory: URL, receipt: URL, runner: ProcessCommandRunner) async throws {
         let manifest = try load(directory: directory)
-        guard let sources = manifest.sources, sources.count == 2,
-              Set(sources.map(\.path)) == Set([validName, invalidName]),
+        guard let sources = manifest.sources, sources.count == 3,
+              Set(sources.map(\.path)) == Set([validName, validBName, invalidName]),
               let expectedInventory = manifest.inventory, let identifier = manifest.simulator else {
             throw failure("Package acceptance verification requires a completely prepared ownership registry.", cause: nil)
         }
@@ -133,8 +137,8 @@ struct PackageInspectionFixtures {
             throw failure("The native cleanup receipt has an invalid schema.", cause: nil)
         }
         let recorded = try JSONDecoder().decode(CleanupReceipt.self, from: receiptData).preparedDirectories
-        guard recorded.count == 2, Set(recorded).count == 2 else {
-            throw failure("The native receipt must contain distinct actual preparation paths from the first valid choice and recovered valid choice.", cause: nil)
+        guard recorded.count == 4, Set(recorded).count == 4 else {
+            throw failure("The native receipt must contain four distinct actual preparation paths from initial inspection, recovery, late completion and the final current package.", cause: nil)
         }
         let temporary = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true).resolvingSymlinksInPath()
         for path in recorded {
@@ -149,13 +153,13 @@ struct PackageInspectionFixtures {
             }
             var metadata = stat()
             guard lstat(prepared.path, &metadata) != 0 else {
-                throw failure("A recorded private preparation remains after malformed re-selection or normal Quit.", cause: nil)
+                throw failure("A recorded private preparation remains after re-selection, stale completion or normal Quit.", cause: nil)
             }
             guard errno == ENOENT else {
                 throw failure("A recorded private preparation could not be checked for absence.", cause: POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO))
             }
         }
-        print("[package fixtures] Independent verification passed: both recorded private preparations are absent, source hashes are unchanged and the owned simulator inventory is unchanged.")
+        print("[package fixtures] Independent verification passed: all four recorded private preparations are absent, all three source hashes are unchanged and the owned simulator inventory is unchanged.")
     }
 
     static func cleanup(directory: URL, runner: ProcessCommandRunner) async throws {
@@ -188,10 +192,10 @@ struct PackageInspectionFixtures {
         print("[package fixtures] Fresh discovery verified the owned simulator UUID and exact owner name absent; the owned fixture directory was removed.")
     }
 
-    static func fixture(directory: URL, runner: ProcessCommandRunner) async throws -> URL {
-        let app = directory.appendingPathComponent(validName, isDirectory: true)
+    static func fixture(directory: URL, name: String, bundle: String, displayName: String, runner: ProcessCommandRunner) async throws -> URL {
+        let app = directory.appendingPathComponent(name, isDirectory: true)
         try SecureFileIO.createNewPrivateDirectory(at: app)
-        let source = directory.appendingPathComponent("Fixture.c")
+        let source = directory.appendingPathComponent("\(app.deletingPathExtension().lastPathComponent).c")
         try SecureFileIO.writeNewFile(Data("int main(void) { return 0; }\n".utf8), to: source, mode: 0o600)
         #if arch(arm64)
         let triple = "arm64-apple-ios17.0-simulator"
@@ -199,8 +203,8 @@ struct PackageInspectionFixtures {
         let triple = "x86_64-apple-ios17.0-simulator"
         #endif
         _ = try await command(["--sdk", "iphonesimulator", "clang", "-target", triple, "-o", app.appendingPathComponent("Fixture").path, source.path], timeout: 300, runner: runner)
-        let info: PlistValue = ["CFBundleIdentifier": .string(fixtureBundle), "CFBundleExecutable": "Fixture", "CFBundleName": "Package Fixture",
-                                "CFBundleDisplayName": "Package Fixture", "CFBundlePackageType": "APPL", "CFBundleVersion": "1",
+        let info: PlistValue = ["CFBundleIdentifier": .string(bundle), "CFBundleExecutable": "Fixture", "CFBundleName": .string(displayName),
+                                "CFBundleDisplayName": .string(displayName), "CFBundlePackageType": "APPL", "CFBundleVersion": "1",
                                 "CFBundleShortVersionString": "1.0", "MinimumOSVersion": "17.0", "CFBundleSupportedPlatforms": ["iPhoneSimulator"], "UIDeviceFamily": [1, 2]]
         try SecureFileIO.writeNewFile(info.encoded(format: .xml), to: app.appendingPathComponent("Info.plist"), mode: 0o600)
         let request = CommandRequest(executable: try AppleTool.codesign.locate(), arguments: ["--sign", "-", app.path], timeout: 60, displayName: "sign package fixture")

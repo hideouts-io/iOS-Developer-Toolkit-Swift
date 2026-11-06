@@ -132,6 +132,80 @@ final class InstallModel {
     private var activePreparations = 0
     private var isShuttingDown = false
     private var cleanupWaiters: [CheckedContinuation<Void, Never>] = []
+#if DEBUG
+    enum CompletionAcceptanceState: String {
+        case idle, armed, held, released, delivered, expired
+    }
+
+    private(set) var completionAcceptanceState: CompletionAcceptanceState = .idle
+    private(set) var heldPreparationDirectory: String?
+    private(set) var heldPreparationID: UUID?
+    private(set) var heldPreparationOriginalURL: URL?
+    private(set) var heldPreparationWasCancelled: Bool?
+    private var completionContinuation: CheckedContinuation<Void, Never>?
+    private var completionDeadline: Task<Void, Never>?
+
+    func armCompletionAcceptance(app: AppModel) throws(ToolkitError) {
+        guard app.packageAcceptanceTarget != nil, completionAcceptanceState == .idle else {
+            throw ToolkitError(.invalidInput, message: "The package completion acceptance gate cannot be armed.", recovery: "Launch a fresh owned-simulator package acceptance session before arming its one-shot gate.", technicalDetail: nil)
+        }
+        completionAcceptanceState = .armed
+    }
+
+    func releaseCompletionAcceptance(app: AppModel) throws(ToolkitError) {
+        guard app.packageAcceptanceTarget != nil, completionAcceptanceState == .held,
+              let continuation = completionContinuation else {
+            throw ToolkitError(.invalidInput, message: "There is no completed package preparation to release.", recovery: "Wait for the owned-simulator package acceptance gate to report held.", technicalDetail: nil)
+        }
+        completionContinuation = nil
+        completionDeadline?.cancel()
+        completionDeadline = nil
+        completionAcceptanceState = .released
+        continuation.resume()
+    }
+
+    /// Acknowledges the real chooser caller after its production selection handling returned.
+    func packageChoiceReturned(_ url: URL) {
+        if completionAcceptanceState == .released, url == heldPreparationOriginalURL {
+            completionAcceptanceState = .delivered
+        }
+    }
+
+    /// Holds a genuine completed preparation outside the serial Security.framework executor.
+    /// Its async frame owns the package until delivery, including cancellation and expiry, so
+    /// the production selection-generation check must dispose of an actually delivered stale A.
+    private func holdCompletedPreparationIfArmed(_ package: PreparedAppPackage, app: AppModel) async {
+        guard app.packageAcceptanceTarget != nil, completionAcceptanceState == .armed else { return }
+        heldPreparationDirectory = package.directory.path
+        heldPreparationID = package.id
+        heldPreparationOriginalURL = package.originalURL
+        await withCheckedContinuation { continuation in
+            completionContinuation = continuation
+            completionAcceptanceState = .held
+            completionDeadline = Task { @MainActor [weak self, weak app] in
+                do {
+                    try await Task.sleep(for: .seconds(180))
+                } catch is CancellationError {
+                    return
+                } catch {
+                    self?.expireCompletionAcceptance(app: app, cause: error.localizedDescription)
+                    return
+                }
+                self?.expireCompletionAcceptance(app: app, cause: nil)
+            }
+        }
+        heldPreparationWasCancelled = Task.isCancelled
+    }
+
+    private func expireCompletionAcceptance(app: AppModel?, cause: String?) {
+        guard completionAcceptanceState == .held, let continuation = completionContinuation else { return }
+        completionContinuation = nil
+        completionDeadline = nil
+        completionAcceptanceState = .expired
+        app?.present(ToolkitError(.timedOut, message: "The completed package acceptance result was not released within 180 seconds.", recovery: "Inspect the native acceptance failure and rerun the test; the actual package result will finish through normal ownership cleanup.", technicalDetail: cause))
+        continuation.resume()
+    }
+#endif
 
     var hasPreparedResources: Bool { preparedPackage != nil || !stalePackages.isEmpty || activePreparations > 0 || isInstalling }
 
@@ -176,7 +250,11 @@ final class InstallModel {
             resumeCleanupIfIdle()
         }
         let result = await app.run("Inspect \(url.lastPathComponent)", workspace: .installApp, target: nil, transport: "Local inspection (Security.framework)", outputPaths: [url.path], onStart: { self.inspectionOperation = $0 }) { _ in
-            try await PreparedAppPackage.prepareAsync(url)
+            let package = try await PreparedAppPackage.prepareAsync(url)
+#if DEBUG
+            await self.holdCompletedPreparationIfArmed(package, app: app)
+#endif
+            return package
         }
         guard selectionID == generation else {
             if let result {

@@ -107,7 +107,12 @@ struct InstallAppView: View {
                 HStack {
                     Button("Choose .ipa or .app…") {
                         if let url = FilePanels.chooseFile(title: "Choose an app package", allowedExtensions: ["ipa", "app"]) {
-                            Task { await install.choose(url, app: model) }
+                            Task {
+                                await install.choose(url, app: model)
+#if DEBUG
+                                if model.packageAcceptanceTarget != nil { install.packageChoiceReturned(url) }
+#endif
+                            }
                         }
                     }
                     .disabled(install.isInstalling)
@@ -134,6 +139,30 @@ struct InstallAppView: View {
                         .accessibilityIdentifier("package-original-url")
                     Text(String(model.operations.count))
                         .accessibilityIdentifier("package-active-operations")
+                    Text(install.completionAcceptanceState.rawValue)
+                        .accessibilityIdentifier("package-completion-state")
+                    Text(install.heldPreparationDirectory ?? "none")
+                        .accessibilityIdentifier("package-held-directory")
+                    Text(install.heldPreparationID?.uuidString ?? "none")
+                        .accessibilityIdentifier("package-held-id")
+                    Text(install.heldPreparationOriginalURL?.path ?? "none")
+                        .accessibilityIdentifier("package-held-original-url")
+                    Text(install.heldPreparationWasCancelled.map(String.init) ?? "pending")
+                        .accessibilityIdentifier("package-held-cancelled")
+                    HStack {
+                        Button("Arm completed package acceptance") {
+                            do { try install.armCompletionAcceptance(app: model) }
+                            catch { model.present(error) }
+                        }
+                        .disabled(install.completionAcceptanceState != .idle)
+                        .accessibilityIdentifier("package-completion-arm")
+                        Button("Release completed package") {
+                            do { try install.releaseCompletionAcceptance(app: model) }
+                            catch { model.present(error) }
+                        }
+                        .disabled(install.completionAcceptanceState != .held)
+                        .accessibilityIdentifier("package-completion-release")
+                    }
                 }
                 .font(.caption.monospaced())
                 .lineLimit(1)

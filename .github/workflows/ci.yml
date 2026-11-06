@@ -112,14 +112,14 @@ jobs:
               if not separator or not value or key in values or "\r" in value or "\x00" in value:
                   raise SystemExit("The package fixture environment has an invalid or duplicate entry.")
               values[key] = value
-          expected_keys = {"IDT_PACKAGE_FIXTURE_DIRECTORY", "IDT_PACKAGE_FIXTURE_SIMULATOR", "IDT_PACKAGE_FIXTURE_OWNER", "IDT_PACKAGE_FIXTURE_VALID", "IDT_PACKAGE_FIXTURE_INVALID"}
+          expected_keys = {"IDT_PACKAGE_FIXTURE_DIRECTORY", "IDT_PACKAGE_FIXTURE_SIMULATOR", "IDT_PACKAGE_FIXTURE_OWNER", "IDT_PACKAGE_FIXTURE_VALID", "IDT_PACKAGE_FIXTURE_VALID_B", "IDT_PACKAGE_FIXTURE_INVALID"}
           if set(values) != expected_keys:
               raise SystemExit("The package fixture environment has an unexpected schema.")
           for key in ("IDT_PACKAGE_FIXTURE_SIMULATOR", "IDT_PACKAGE_FIXTURE_OWNER"):
               if str(uuid.UUID(values[key])).upper() != values[key]:
                   raise SystemExit("The package fixture environment requires canonical UUIDs.")
           directory = (Path(os.environ["RUNNER_TEMP"]) / "package-fixtures-data").resolve(strict=True)
-          expected_paths = {"IDT_PACKAGE_FIXTURE_DIRECTORY": directory, "IDT_PACKAGE_FIXTURE_VALID": directory / "ValidSimulator.app", "IDT_PACKAGE_FIXTURE_INVALID": directory / "Malformed.ipa"}
+          expected_paths = {"IDT_PACKAGE_FIXTURE_DIRECTORY": directory, "IDT_PACKAGE_FIXTURE_VALID": directory / "ValidSimulator.app", "IDT_PACKAGE_FIXTURE_VALID_B": directory / "ValidSimulatorB.app", "IDT_PACKAGE_FIXTURE_INVALID": directory / "Malformed.ipa"}
           for key, expected in expected_paths.items():
               candidate = Path(values[key])
               if not candidate.is_absolute() or candidate.is_symlink() or candidate.resolve(strict=True) != expected:
@@ -128,7 +128,7 @@ jobs:
               for key in sorted(values):
                   output.write("TEST_RUNNER_" + key + "=" + values[key] + "\n")
           PY
-      - name: Hosted package inspection recovery and normal Quit acceptance
+      - name: Hosted package recovery, late completion and normal Quit acceptance
         env:
           TEST_RUNNER_IDT_PACKAGE_UI_TESTS: "1"
         run: |

@@ -128,7 +128,7 @@ jobs:
               for key in sorted(values):
                   output.write("TEST_RUNNER_" + key + "=" + values[key] + "\n")
           PY
-      - name: Hosted package recovery, late completion and normal Quit acceptance
+      - name: Hosted package recovery, late completion and incomplete reader Quit acceptance
         env:
           TEST_RUNNER_IDT_PACKAGE_UI_TESTS: "1"
         run: |

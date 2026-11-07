@@ -137,8 +137,8 @@ struct PackageInspectionFixtures {
             throw failure("The native cleanup receipt has an invalid schema.", cause: nil)
         }
         let recorded = try JSONDecoder().decode(CleanupReceipt.self, from: receiptData).preparedDirectories
-        guard recorded.count == 4, Set(recorded).count == 4 else {
-            throw failure("The native receipt must contain four distinct actual preparation paths from initial inspection, recovery, late completion and the final current package.", cause: nil)
+        guard recorded.count == 6, Set(recorded).count == 6 else {
+            throw failure("The native receipt must contain six distinct actual preparation paths from initial inspection, recovery, late completion, the current package, the incomplete reader and reader recovery.", cause: nil)
         }
         let temporary = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true).resolvingSymlinksInPath()
         for path in recorded {
@@ -153,13 +153,13 @@ struct PackageInspectionFixtures {
             }
             var metadata = stat()
             guard lstat(prepared.path, &metadata) != 0 else {
-                throw failure("A recorded private preparation remains after re-selection, stale completion or normal Quit.", cause: nil)
+                throw failure("A recorded private preparation remains after re-selection, stale completion, reader cancellation or normal Quit.", cause: nil)
             }
             guard errno == ENOENT else {
                 throw failure("A recorded private preparation could not be checked for absence.", cause: POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO))
             }
         }
-        print("[package fixtures] Independent verification passed: all four recorded private preparations are absent, all three source hashes are unchanged and the owned simulator inventory is unchanged.")
+        print("[package fixtures] Independent verification passed: all six recorded private preparations are absent, all three source hashes are unchanged and the owned simulator inventory is unchanged.")
     }
 
     static func cleanup(directory: URL, runner: ProcessCommandRunner) async throws {

@@ -142,6 +142,25 @@ public enum CodeSignatureInspector {
         guard SecStaticCodeCreateWithPath(url as CFURL, [], &codeReference) == errSecSuccess, let code = codeReference else {
             return CodeSignatureSummary(status: .missing, identifier: nil, teamIdentifier: nil, authorities: [], detail: "The app bundle could not be opened for signature checking.")
         }
+        return verify(code)
+    }
+
+#if DEBUG
+    static func inspectForReaderAcceptance(bundle url: URL, reader: PackageInspectionReaderAcceptance) throws -> CodeSignatureSummary {
+        var codeReference: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(url as CFURL, [], &codeReference) == errSecSuccess, let code = codeReference else {
+            throw ToolkitError(.invalidInput, message: "The acceptance app bundle could not be opened for native signature checking.", recovery: "Choose the genuine signed simulator fixture again.", technicalDetail: nil)
+        }
+        return try withExtendedLifetime(code) {
+            try reader.holdNativeHandle(bundle: url)
+            let summary = verify(code)
+            reader.validationReturned(status: summary.status)
+            return summary
+        }
+    }
+#endif
+
+    private static func verify(_ code: SecStaticCode) -> CodeSignatureSummary {
         var errors: Unmanaged<CFError>?
         let flags = SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSStrictValidate | kSecCSCheckNestedCode)
         let status = SecStaticCodeCheckValidityWithErrors(code, flags, nil, &errors)
@@ -174,6 +193,16 @@ enum PackageInspectionExecutor {
     private static let queue = DispatchQueue(label: "io.hideouts.package-inspection", qos: .userInitiated)
 
     static func run<Value: Sendable>(_ operation: @escaping @Sendable (CancellationCheck) throws -> Value) async throws -> Value {
+        try await perform(onCancellation: {}, operation)
+    }
+
+#if DEBUG
+    static func runForReaderAcceptance<Value: Sendable>(reader: PackageInspectionReaderAcceptance, _ operation: @escaping @Sendable (CancellationCheck) throws -> Value) async throws -> Value {
+        try await perform(onCancellation: { reader.cancellationRequested() }, operation)
+    }
+#endif
+
+    private static func perform<Value: Sendable>(onCancellation: @escaping @Sendable () -> Void, _ operation: @escaping @Sendable (CancellationCheck) throws -> Value) async throws -> Value {
         let cancelled = LockedValue(false)
         let checkCancellation: CancellationCheck = {
             if cancelled.current { throw CancellationError() }
@@ -190,6 +219,7 @@ enum PackageInspectionExecutor {
             }
         } onCancel: {
             cancelled.withLock { $0 = true }
+            onCancellation()
         }
     }
 }

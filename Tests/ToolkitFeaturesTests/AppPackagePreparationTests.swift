@@ -53,6 +53,72 @@ struct AppPackagePreparationTests {
         #expect(FileManager.default.fileExists(atPath: app.appendingPathComponent("Demo").path))
     }
 
+#if DEBUG
+    @Test(.timeLimit(.minutes(1)), .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/codesign")))
+    func runningNativeReaderRetainsItsCopyUntilValidationAndCancellationFinish() async throws {
+        let root = try SecureFileIO.makeTemporaryDirectory(prefix: "prepared-native-reader")
+        defer { removeTestItem(root) }
+        let app = try makeApp(root, name: "ReaderDemo", platform: "iPhoneSimulator")
+        try await sign(app, in: root)
+        let original = try Data(contentsOf: app.appendingPathComponent("ReaderDemo"))
+        let (events, continuation) = AsyncStream<PackageInspectionReaderAcceptance.Snapshot>.makeStream()
+        let reader = PackageInspectionReaderAcceptance(observer: { continuation.yield($0) })
+        try await withThrowingTaskGroup(of: PreparedAppPackage.self) { group in
+            group.addTask {
+                defer { continuation.finish() }
+                return try await PreparedAppPackage.prepareAsyncForReaderAcceptance(app, reader: reader)
+            }
+            do {
+                let held = try await withTimeout(10, operation: "observe a genuine native reader") {
+                    for await snapshot in events {
+                        if snapshot.phase == .nativeHandleHeldBeforeValidation { return snapshot }
+                    }
+                    throw ToolkitError(.internalInconsistency, message: "The native reader ended before opening its code handle.", recovery: nil, technicalDetail: nil)
+                }
+                let directory = try #require(held.directory)
+                let copy = try #require(held.packageURL)
+                #expect(held.originalURL == app)
+                var metadata = stat()
+                #expect(lstat(directory.path, &metadata) == 0)
+                #expect(metadata.st_mode & 0o777 == 0o700)
+                #expect(try Data(contentsOf: copy.appendingPathComponent("ReaderDemo")) == original)
+
+                group.cancelAll()
+                let cancelled = try await withTimeout(10, operation: "observe native reader cancellation") {
+                    for await snapshot in events {
+                        if snapshot.cancellationRequested { return snapshot }
+                    }
+                    throw ToolkitError(.internalInconsistency, message: "The native reader ended before observing cancellation.", recovery: nil, technicalDetail: nil)
+                }
+                #expect(cancelled.phase == .nativeHandleHeldBeforeValidation)
+                #expect(lstat(directory.path, &metadata) == 0)
+                try reader.release()
+                var observedCancellation = false
+                do {
+                    if let unexpected = try await group.next() {
+                        try unexpected.remove()
+                        Issue.record("A cancelled native reader returned an installable preparation.")
+                    }
+                } catch is CancellationError {
+                    observedCancellation = true
+                }
+                #expect(observedCancellation)
+                #expect(reader.snapshot.phase == .validationReturned)
+                #expect(reader.snapshot.signatureStatus == .valid)
+                let removal = lstat(directory.path, &metadata)
+                let removalError = errno
+                #expect(removal == -1)
+                #expect(removalError == ENOENT)
+                #expect(try Data(contentsOf: app.appendingPathComponent("ReaderDemo")) == original)
+            } catch {
+                group.cancelAll()
+                reader.finishAfterFailure()
+                throw error
+            }
+        }
+    }
+#endif
+
     private enum ChangedLocation: String, CaseIterable {
         case original, prepared
     }

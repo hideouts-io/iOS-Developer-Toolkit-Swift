@@ -163,6 +163,36 @@ struct InstallAppView: View {
                         .disabled(install.completionAcceptanceState != .held)
                         .accessibilityIdentifier("package-completion-release")
                     }
+                    Text(model.isTerminating ? "true" : "false")
+                        .accessibilityIdentifier("package-is-terminating")
+                    Text(install.readerSnapshot?.phase.rawValue ?? "idle")
+                        .accessibilityIdentifier("package-reader-phase")
+                    Text(install.readerSnapshot?.directory?.path ?? "none")
+                        .accessibilityIdentifier("package-reader-directory")
+                    Text(install.readerSnapshot?.packageURL?.path ?? "none")
+                        .accessibilityIdentifier("package-reader-package-url")
+                    Text(install.readerSnapshot?.originalURL?.path ?? "none")
+                        .accessibilityIdentifier("package-reader-original-url")
+                    Text(install.readerSnapshot?.cancellationRequested == true ? "true" : "false")
+                        .accessibilityIdentifier("package-reader-cancelled")
+                    Text(install.readerSnapshot?.signatureStatus?.rawValue ?? "pending")
+                        .accessibilityIdentifier("package-reader-signature-status")
+                    Text(install.readerChoiceReturned ? "true" : "false")
+                        .accessibilityIdentifier("package-reader-choice-returned")
+                    HStack {
+                        Button("Arm native reader acceptance") {
+                            do { try install.armReaderAcceptance(app: model) }
+                            catch { model.present(error) }
+                        }
+                        .disabled(install.readerSnapshot != nil)
+                        .accessibilityIdentifier("package-reader-arm")
+                        Button("Release native reader") {
+                            do { try install.releaseReaderAcceptance(app: model) }
+                            catch { model.present(error) }
+                        }
+                        .disabled(install.readerSnapshot?.phase != .nativeHandleHeldBeforeValidation)
+                        .accessibilityIdentifier("package-reader-release")
+                    }
                 }
                 .font(.caption.monospaced())
                 .lineLimit(1)

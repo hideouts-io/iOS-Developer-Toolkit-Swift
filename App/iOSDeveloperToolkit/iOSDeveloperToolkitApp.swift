@@ -83,6 +83,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 alert.addButton(withTitle: "Quit Anyway")
                 alert.addButton(withTitle: "Cancel")
+                alert.buttons[0].setAccessibilityIdentifier("quit-operations-confirm")
+                alert.buttons[1].setAccessibilityIdentifier("quit-operations-cancel")
                 guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
             }
             // A modal alert runs a nested event loop. Writing may have started while it was open.

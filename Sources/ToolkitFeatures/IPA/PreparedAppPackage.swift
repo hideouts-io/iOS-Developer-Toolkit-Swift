@@ -25,8 +25,27 @@ public struct PreparedAppPackage: Sendable {
     /// until native validation finishes, then removes its private copy before receiving cancellation.
     public static func prepareAsync(_ source: URL) async throws -> PreparedAppPackage {
         let package = try await PackageInspectionExecutor.run { checkCancellation in
-            try prepare(source, checkCancellation: checkCancellation)
+            try prepare(source, checkCancellation: checkCancellation, inspectSignature: { CodeSignatureInspector.inspect(bundle: $0) })
         }
+        return try finishPreparation(package)
+    }
+
+#if DEBUG
+    /// Explicit acceptance keeps a genuine native code handle alive before validation. The
+    /// ordinary signature verifier and subsequent cancellation/ownership cleanup still run.
+    public static func prepareAsyncForReaderAcceptance(_ source: URL, reader: PackageInspectionReaderAcceptance) async throws -> PreparedAppPackage {
+        guard source.isFileURL, source.pathExtension.lowercased() == "app" else {
+            throw ToolkitError.invalidInput("Native reader acceptance requires a genuine .app bundle.")
+        }
+        try reader.begin(source: source)
+        let package = try await PackageInspectionExecutor.runForReaderAcceptance(reader: reader) { checkCancellation in
+            try prepare(source, checkCancellation: checkCancellation, inspectSignature: { try CodeSignatureInspector.inspectForReaderAcceptance(bundle: $0, reader: reader) })
+        }
+        return try finishPreparation(package)
+    }
+#endif
+
+    private static func finishPreparation(_ package: PreparedAppPackage) throws -> PreparedAppPackage {
         guard !Task.isCancelled else {
             do { try package.remove() }
             catch {
@@ -39,10 +58,10 @@ public struct PreparedAppPackage: Sendable {
 
     /// Blocking entry point for synchronous callers. Swift tasks should use `prepareAsync`.
     public static func prepare(_ source: URL) throws -> PreparedAppPackage {
-        try prepare(source, checkCancellation: { try Task.checkCancellation() })
+        try prepare(source, checkCancellation: { try Task.checkCancellation() }, inspectSignature: { CodeSignatureInspector.inspect(bundle: $0) })
     }
 
-    private static func prepare(_ source: URL, checkCancellation: PackageInspectionExecutor.CancellationCheck) throws -> PreparedAppPackage {
+    private static func prepare(_ source: URL, checkCancellation: PackageInspectionExecutor.CancellationCheck, inspectSignature: @Sendable (URL) throws -> CodeSignatureSummary) throws -> PreparedAppPackage {
         try checkCancellation()
         guard source.isFileURL, ["ipa", "app"].contains(source.pathExtension.lowercased()) else {
             throw ToolkitError.invalidInput("Choose an .ipa package or an iOS .app bundle.")
@@ -72,7 +91,7 @@ public struct PreparedAppPackage: Sendable {
                 inspection = nil
                 appName = info.name
                 platforms = info.platforms
-                signature = CodeSignatureInspector.inspect(bundle: copy)
+                signature = try inspectSignature(copy)
             }
             guard try packageIdentity(copy, checkCancellation: checkCancellation) == identity, try packageIdentity(original, checkCancellation: checkCancellation) == identity else {
                 throw ToolkitError(.invalidInput, message: "The package changed during inspection.", recovery: "Choose the completed package again.", technicalDetail: original.path)

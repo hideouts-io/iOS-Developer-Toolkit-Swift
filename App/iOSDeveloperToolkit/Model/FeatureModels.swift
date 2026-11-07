@@ -144,6 +144,34 @@ final class InstallModel {
     private(set) var heldPreparationWasCancelled: Bool?
     private var completionContinuation: CheckedContinuation<Void, Never>?
     private var completionDeadline: Task<Void, Never>?
+    private var readerAcceptance: PackageInspectionReaderAcceptance?
+    private var readerAcceptanceID: UUID?
+    private(set) var readerSnapshot: PackageInspectionReaderAcceptance.Snapshot?
+    private(set) var readerChoiceReturned = false
+
+    func armReaderAcceptance(app: AppModel) throws(ToolkitError) {
+        guard app.packageAcceptanceTarget != nil, readerAcceptance == nil else {
+            throw ToolkitError(.invalidInput, message: "The native package reader acceptance gate cannot be armed.", recovery: "Launch a fresh owned-simulator package acceptance session before arming its one-shot reader gate.", technicalDetail: nil)
+        }
+        let identifier = UUID()
+        readerAcceptanceID = identifier
+        let reader = PackageInspectionReaderAcceptance { [weak self] snapshot in
+            Task { @MainActor in
+                guard let self, self.readerAcceptanceID == identifier,
+                      snapshot.revision > (self.readerSnapshot?.revision ?? 0) else { return }
+                self.readerSnapshot = snapshot
+            }
+        }
+        readerAcceptance = reader
+        readerSnapshot = reader.snapshot
+    }
+
+    func releaseReaderAcceptance(app: AppModel) throws {
+        guard app.packageAcceptanceTarget != nil, let readerAcceptance else {
+            throw ToolkitError(.invalidInput, message: "There is no native package reader to release.", recovery: "Arm the owned-simulator reader acceptance gate and wait for its native handle.", technicalDetail: nil)
+        }
+        try readerAcceptance.release()
+    }
 
     func armCompletionAcceptance(app: AppModel) throws(ToolkitError) {
         guard app.packageAcceptanceTarget != nil, completionAcceptanceState == .idle else {
@@ -168,6 +196,12 @@ final class InstallModel {
     func packageChoiceReturned(_ url: URL) {
         if completionAcceptanceState == .released, url == heldPreparationOriginalURL {
             completionAcceptanceState = .delivered
+        }
+        if let readerAcceptance {
+            let snapshot = readerAcceptance.snapshot
+            if snapshot.phase == .validationReturned, snapshot.originalURL == url {
+                readerChoiceReturned = true
+            }
         }
     }
 
@@ -249,10 +283,20 @@ final class InstallModel {
             activePreparations -= 1
             resumeCleanupIfIdle()
         }
-        let result = await app.run("Inspect \(url.lastPathComponent)", workspace: .installApp, target: nil, transport: "Local inspection (Security.framework)", outputPaths: [url.path], onStart: { self.inspectionOperation = $0 }) { _ in
-            let package = try await PreparedAppPackage.prepareAsync(url)
 #if DEBUG
+        let reader = readerAcceptance?.snapshot.phase == .armed ? readerAcceptance : nil
+#endif
+        let result = await app.run("Inspect \(url.lastPathComponent)", workspace: .installApp, target: nil, transport: "Local inspection (Security.framework)", outputPaths: [url.path], onStart: { self.inspectionOperation = $0 }) { _ in
+#if DEBUG
+            let package: PreparedAppPackage
+            if let reader {
+                package = try await PreparedAppPackage.prepareAsyncForReaderAcceptance(url, reader: reader)
+            } else {
+                package = try await PreparedAppPackage.prepareAsync(url)
+            }
             await self.holdCompletedPreparationIfArmed(package, app: app)
+#else
+            let package = try await PreparedAppPackage.prepareAsync(url)
 #endif
             return package
         }

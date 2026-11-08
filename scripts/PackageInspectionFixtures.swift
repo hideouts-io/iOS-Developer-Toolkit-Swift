@@ -42,6 +42,15 @@ struct PackageInspectionFixtures {
         let preparedDirectories: [String]
     }
 
+    enum PreparationPhase: String {
+        case templateBeforeAllocation = "template-before-allocation"
+        case ownedVerificationAfterBoot = "owned-verification-after-boot"
+    }
+
+    enum PreparationEvent: String {
+        case begin, complete, failed
+    }
+
     static let validName = "ValidSimulator.app"
     static let validBName = "ValidSimulatorB.app"
     static let invalidName = "Malformed.ipa"
@@ -78,7 +87,9 @@ struct PackageInspectionFixtures {
             .filter { $0.hasPrefix("idt-prepared-app.") }.sorted()
         var manifest = Manifest(owner: owner, simulator: nil, sources: nil, inventory: nil, existingPreparations: existingPreparations)
         try save(manifest, directory: directory)
-        let template = try await simulatorTemplate(runner: runner)
+        let template = try await tracePreparationPhase(.templateBeforeAllocation) {
+            try await simulatorTemplate(runner: runner)
+        }
         let result = try await command(["simctl", "create", "IDT Package \(owner)", template.type, template.runtime], timeout: 120, runner: runner)
         guard let identifier = UUID(uuidString: result.standardOutputText.trimmingCharacters(in: .whitespacesAndNewlines))?.uuidString else {
             throw failure("simctl create did not return a valid fixture UUID; cleanup must reconcile its exact owner name before retrying.", cause: nil)
@@ -86,7 +97,9 @@ struct PackageInspectionFixtures {
         manifest = Manifest(owner: owner, simulator: identifier, sources: nil, inventory: nil, existingPreparations: existingPreparations)
         try await register(manifest, directory: directory, runner: runner)
         _ = try await command(["simctl", "bootstatus", identifier, "-b"], timeout: 600, runner: runner)
-        try await requireOwnedSimulator(manifest, runner: runner)
+        try await tracePreparationPhase(.ownedVerificationAfterBoot) {
+            try await requireOwnedSimulator(manifest, runner: runner)
+        }
         let app = try await fixture(directory: directory, name: validName, bundle: fixtureBundle, displayName: "Package Fixture", runner: runner)
         let appB = try await fixture(directory: directory, name: validBName, bundle: fixtureBBundle, displayName: "Package Fixture B", runner: runner)
         let malformed = directory.appendingPathComponent(invalidName)
@@ -349,6 +362,39 @@ struct PackageInspectionFixtures {
             do { try handle.close() }
             catch let closeError { throw failure("Reading and closing an acceptance record failed.", cause: error).appendingDetail(bounded(closeError)) }
             throw error
+        }
+    }
+
+    /// Records only static preparation stages and monotonic duration. Cleanup never depends
+    /// on these writes, and a reporting failure cannot replace an existing command failure.
+    static func tracePreparationPhase<Value>(_ phase: PreparationPhase, operation: () async throws -> Value) async throws -> Value {
+        let clock = ContinuousClock()
+        let started = clock.now
+        try writePreparationEvent(phase, event: .begin, elapsed: .zero)
+        let value: Value
+        do {
+            value = try await operation()
+        } catch {
+            let primaryError = error
+            do {
+                try writePreparationEvent(phase, event: .failed, elapsed: started.duration(to: clock.now))
+            } catch let reportingError {
+                throw ToolkitError.wrap(primaryError, message: "Hosted fixture preparation failed.", recovery: "Inspect the preparation phase and retained ownership registry.")
+                    .appendingDetail("Writing the failed preparation phase also failed: \(bounded(reportingError))")
+            }
+            throw primaryError
+        }
+        try writePreparationEvent(phase, event: .complete, elapsed: started.duration(to: clock.now))
+        return value
+    }
+
+    static func writePreparationEvent(_ phase: PreparationPhase, event: PreparationEvent, elapsed: Duration) throws {
+        let duration = elapsed.components
+        let record = "[package fixtures] preparation phase=\(phase.rawValue) event=\(event.rawValue) elapsed_seconds=\(duration.seconds) elapsed_attoseconds=\(duration.attoseconds)\n"
+        do {
+            try FileHandle.standardError.write(contentsOf: Data(record.utf8))
+        } catch {
+            throw ToolkitError.fileSystem("Could not write hosted preparation phase diagnostics to standard error.", path: nil, underlying: error)
         }
     }
 

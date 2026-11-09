@@ -51,6 +51,70 @@ struct PackageInspectionFixtures {
         case begin, complete, failed
     }
 
+    enum CommandObservationOutcome: String {
+        case returned, threw
+    }
+
+    struct OutputDelivery {
+        let bytes: Int
+        let first: Duration?
+        let last: Duration?
+
+        static let empty = OutputDelivery(bytes: 0, first: nil, last: nil)
+
+        func adding(_ data: Data, at elapsed: Duration) -> OutputDelivery {
+            guard !data.isEmpty else { return self }
+            return OutputDelivery(bytes: bytes + data.count, first: first ?? elapsed, last: elapsed)
+        }
+    }
+
+    /// Observes only the prepared simulator's post-boot query. Delivery times describe when
+    /// this consumer received nonempty bytes, not JSON validity or the child's exit time.
+    struct PostBootObservedRunner: CommandRunning {
+        let base: ProcessCommandRunner
+
+        func run(_ request: CommandRequest) async throws -> CommandResult {
+            let clock = ContinuousClock()
+            let started = clock.now
+            var standardOutput = OutputDelivery.empty
+            var standardError = OutputDelivery.empty
+            var final: CommandResult?
+            let result: CommandResult
+            do {
+                for try await event in base.stream(request) {
+                    switch event {
+                    case .standardOutput(let data):
+                        standardOutput = standardOutput.adding(data, at: started.duration(to: clock.now))
+                    case .standardError(let data):
+                        standardError = standardError.adding(data, at: started.duration(to: clock.now))
+                    case .finished(let completed):
+                        final = completed
+                    }
+                }
+                if Task.isCancelled { throw ToolkitError.cancelled(request.displayName) }
+                guard let final else {
+                    throw ToolkitError(.internalInconsistency, message: "\(request.displayName) ended without a result.", recovery: nil, technicalDetail: nil)
+                }
+                result = final
+            } catch {
+                let primaryError = error
+                do {
+                    try writePostBootObservation(outcome: .threw, standardOutput: standardOutput, standardError: standardError, finishedSeen: final != nil, elapsed: started.duration(to: clock.now))
+                } catch let reportingError {
+                    throw ToolkitError.wrap(primaryError, message: "The post-boot simulator query failed.", recovery: "Inspect the delivery summary and original command failure.")
+                        .appendingDetail("Writing the post-boot delivery summary also failed: \(bounded(reportingError))")
+                }
+                throw primaryError
+            }
+            try writePostBootObservation(outcome: .returned, standardOutput: standardOutput, standardError: standardError, finishedSeen: final != nil, elapsed: started.duration(to: clock.now))
+            return result
+        }
+
+        func stream(_ request: CommandRequest) -> AsyncThrowingStream<CommandStreamEvent, Error> {
+            base.stream(request)
+        }
+    }
+
     static let validName = "ValidSimulator.app"
     static let validBName = "ValidSimulatorB.app"
     static let invalidName = "Malformed.ipa"
@@ -98,7 +162,7 @@ struct PackageInspectionFixtures {
         try await register(manifest, directory: directory, runner: runner)
         _ = try await command(["simctl", "bootstatus", identifier, "-b"], timeout: 600, runner: runner)
         try await tracePreparationPhase(.ownedVerificationAfterBoot) {
-            try await requireOwnedSimulator(manifest, runner: runner)
+            try await requireOwnedSimulator(manifest, runner: PostBootObservedRunner(base: runner))
         }
         let app = try await fixture(directory: directory, name: validName, bundle: fixtureBundle, displayName: "Package Fixture", runner: runner)
         let appB = try await fixture(directory: directory, name: validBName, bundle: fixtureBBundle, displayName: "Package Fixture B", runner: runner)
@@ -279,7 +343,7 @@ struct PackageInspectionFixtures {
         return template
     }
 
-    static func simulators(runner: ProcessCommandRunner) async throws -> [Simulator] {
+    static func simulators(runner: some CommandRunning) async throws -> [Simulator] {
         let json = try JSONValue.parse(try await command(["simctl", "list", "devices", "--json"], timeout: 60, runner: runner).standardOutput)
         guard let groups = json["devices"]?.object else { throw failure("simctl returned no device groups.", cause: nil) }
         return try groups.keys.sorted().flatMap { runtime -> [Simulator] in
@@ -292,7 +356,7 @@ struct PackageInspectionFixtures {
         }
     }
 
-    static func requireOwnedSimulator(_ manifest: Manifest, runner: ProcessCommandRunner) async throws {
+    static func requireOwnedSimulator(_ manifest: Manifest, runner: some CommandRunning) async throws {
         guard let identifier = manifest.simulator,
               try await simulators(runner: runner).contains(where: {
                   $0.identifier == identifier && $0.name == "IDT Package \(manifest.owner)" && $0.available && $0.state == "Booted"
@@ -398,7 +462,25 @@ struct PackageInspectionFixtures {
         }
     }
 
-    static func command(_ arguments: [String], timeout: TimeInterval, runner: ProcessCommandRunner) async throws -> CommandResult {
+    /// First/last fields are consumer-relative seconds:attoseconds, or `none` when no bytes
+    /// were delivered. A returned result may be nonzero; normal command validation still runs.
+    static func writePostBootObservation(outcome: CommandObservationOutcome, standardOutput: OutputDelivery, standardError: OutputDelivery, finishedSeen: Bool, elapsed: Duration) throws {
+        let duration = elapsed.components
+        let record = "[package fixtures] postboot-list-stream outcome=\(outcome.rawValue) stdout_bytes=\(standardOutput.bytes) stdout_first=\(relativeDeliveryTime(standardOutput.first)) stdout_last=\(relativeDeliveryTime(standardOutput.last)) stderr_bytes=\(standardError.bytes) stderr_first=\(relativeDeliveryTime(standardError.first)) stderr_last=\(relativeDeliveryTime(standardError.last)) finished_seen=\(finishedSeen) elapsed_seconds=\(duration.seconds) elapsed_attoseconds=\(duration.attoseconds)\n"
+        do {
+            try FileHandle.standardError.write(contentsOf: Data(record.utf8))
+        } catch {
+            throw ToolkitError.fileSystem("Could not write post-boot command delivery diagnostics to standard error.", path: nil, underlying: error)
+        }
+    }
+
+    static func relativeDeliveryTime(_ duration: Duration?) -> String {
+        guard let duration else { return "none" }
+        let components = duration.components
+        return "\(components.seconds):\(components.attoseconds)"
+    }
+
+    static func command(_ arguments: [String], timeout: TimeInterval, runner: some CommandRunning) async throws -> CommandResult {
         let request = CommandRequest(executable: try AppleTool.xcrun.locate(), arguments: arguments, timeout: timeout, displayName: "package fixture tool")
         let result = try await runner.run(request)
         guard result.succeeded else { throw failure("A package fixture tool failed.", cause: nil).appendingDetail(String(result.technicalSummary.prefix(1536))) }

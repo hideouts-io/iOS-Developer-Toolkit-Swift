@@ -303,12 +303,15 @@ struct TargetPicker: View {
                     Text(model.selectedDevice?.name ?? "Choose a Device")
                         .font(.headline)
                         .lineLimit(1)
+                        .truncationMode(.middle)
                     if let device = model.selectedDevice {
                         Text(device.kind.label)
                             .font(.caption2)
                             .foregroundStyle(device.kind == .simulator ? Color.purple : (device.kind == .demo ? Color.orange : Color.blue))
                     }
                 }
+                // Long target names must leave room for navigation at the minimum window width.
+                .frame(maxWidth: 220, alignment: .leading)
             }
         }
         .menuIndicator(.visible)

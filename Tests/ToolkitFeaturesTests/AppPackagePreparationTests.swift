@@ -117,6 +117,97 @@ struct AppPackagePreparationTests {
             }
         }
     }
+
+    private enum ReaderObservationFailure: Error {
+        case interrupted
+    }
+
+    @Test(.timeLimit(.minutes(1)), .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/codesign")))
+    func failedCallerReleasesItsHeldNativeReaderBeforeRethrowing() async throws {
+        let root = try SecureFileIO.makeTemporaryDirectory(prefix: "prepared-reader-failure")
+        defer { removeTestItem(root) }
+        let app = try makeApp(root, name: "FailedReaderDemo", platform: "iPhoneSimulator")
+        try await sign(app, in: root)
+        let filenames: [String] = ["Info.plist", "FailedReaderDemo", "resource.txt"]
+        let originals: [Data] = try filenames.map { try Data(contentsOf: app.appendingPathComponent($0)) }
+        let (events, continuation) = AsyncStream<PackageInspectionReaderAcceptance.Snapshot>.makeStream()
+        let reader = PackageInspectionReaderAcceptance(observer: { continuation.yield($0) })
+        let observedWorkerCancellation = LockedValue(false)
+        var heldDirectory: URL?
+        defer {
+            if let directory = heldDirectory {
+                var metadata = stat()
+                let result = lstat(directory.path, &metadata)
+                let code = errno
+                if result == 0 { removeTestItem(directory) }
+                else { #expect(code == ENOENT) }
+            }
+        }
+
+        var observedCallerFailure = false
+        do {
+            try await withThrowingTaskGroup(of: PreparedAppPackage.self) { group in
+                group.addTask {
+                    defer { continuation.finish() }
+                    do {
+                        let unexpected = try await PreparedAppPackage.prepareAsyncForReaderAcceptance(app, reader: reader)
+                        Issue.record("Failure teardown returned an installable preparation.")
+                        try unexpected.remove()
+                        return unexpected
+                    } catch let error as CancellationError {
+                        observedWorkerCancellation.withLock { $0 = true }
+                        throw error
+                    }
+                }
+                do {
+                    let held = try await withTimeout(10, operation: "observe a native reader before caller failure") {
+                        for await snapshot in events {
+                            if snapshot.phase == .nativeHandleHeldBeforeValidation { return snapshot }
+                        }
+                        throw ToolkitError(.internalInconsistency, message: "The native reader ended before the caller failure could be exercised.", recovery: nil, technicalDetail: nil)
+                    }
+                    let directory = try #require(held.directory)
+                    let copy = try #require(held.packageURL)
+                    heldDirectory = directory
+                    #expect(held.originalURL == app)
+                    #expect(!held.cancellationRequested)
+                    #expect(held.signatureStatus == nil)
+                    var metadata = stat()
+                    #expect(lstat(directory.path, &metadata) == 0)
+                    #expect(metadata.st_mode & S_IFMT == S_IFDIR)
+                    #expect(metadata.st_uid == getuid())
+                    #expect(metadata.st_mode & 0o777 == 0o700)
+                    for (filename, original) in zip(filenames, originals) {
+                        #expect(try Data(contentsOf: copy.appendingPathComponent(filename)) == original)
+                    }
+                    // Only the caller failure is controlled; the worker and validation are real.
+                    throw ReaderObservationFailure.interrupted
+                } catch {
+                    group.cancelAll()
+                    reader.finishAfterFailure()
+                    throw error
+                }
+            }
+        } catch ReaderObservationFailure.interrupted {
+            observedCallerFailure = true
+        }
+
+        #expect(observedCallerFailure)
+        #expect(observedWorkerCancellation.current)
+        #expect(reader.snapshot.phase == .validationReturned)
+        #expect(reader.snapshot.signatureStatus == .valid)
+        #expect(reader.snapshot.cancellationRequested)
+        let directory = try #require(heldDirectory)
+        #expect(reader.snapshot.directory == directory)
+        var metadata = stat()
+        let removal = lstat(directory.path, &metadata)
+        let removalError = errno
+        #expect(removal == -1)
+        #expect(removalError == ENOENT)
+        for (filename, original) in zip(filenames, originals) {
+            #expect(try Data(contentsOf: app.appendingPathComponent(filename)) == original)
+        }
+    }
 #endif
 
     private enum ChangedLocation: String, CaseIterable {

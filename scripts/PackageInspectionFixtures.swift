@@ -70,10 +70,15 @@ struct PackageInspectionFixtures {
 
     /// Observes only the prepared simulator's post-boot query. Delivery times describe when
     /// this consumer received nonempty bytes, not JSON validity or the child's exit time.
+    /// Owned-process sampling can perturb scheduling. Consumer timing excludes observer
+    /// teardown; the request's own deadline and process behavior remain unchanged.
     struct PostBootObservedRunner: CommandRunning {
         let base: ProcessCommandRunner
 
         func run(_ request: CommandRequest) async throws -> CommandResult {
+            let observation = Task.detached(priority: .utility) {
+                await PackageProcessObservation(runner: base).collect()
+            }
             let clock = ContinuousClock()
             let started = clock.now
             var standardOutput = OutputDelivery.empty
@@ -98,15 +103,23 @@ struct PackageInspectionFixtures {
                 result = final
             } catch {
                 let primaryError = error
+                let consumerElapsed = started.duration(to: clock.now)
+                observation.cancel()
+                let processReport = await observation.value
                 do {
-                    try writePostBootObservation(outcome: .threw, standardOutput: standardOutput, standardError: standardError, finishedSeen: final != nil, elapsed: started.duration(to: clock.now))
+                    try writePostBootObservation(outcome: .threw, standardOutput: standardOutput, standardError: standardError, finishedSeen: final != nil, elapsed: consumerElapsed)
+                    try PackageProcessObservation.write(processReport)
                 } catch let reportingError {
                     throw ToolkitError.wrap(primaryError, message: "The post-boot simulator query failed.", recovery: "Inspect the delivery summary and original command failure.")
-                        .appendingDetail("Writing the post-boot delivery summary also failed: \(bounded(reportingError))")
+                        .appendingDetail("Writing the post-boot observations also failed: \(bounded(reportingError))")
                 }
                 throw primaryError
             }
-            try writePostBootObservation(outcome: .returned, standardOutput: standardOutput, standardError: standardError, finishedSeen: final != nil, elapsed: started.duration(to: clock.now))
+            let consumerElapsed = started.duration(to: clock.now)
+            observation.cancel()
+            let processReport = await observation.value
+            try writePostBootObservation(outcome: .returned, standardOutput: standardOutput, standardError: standardError, finishedSeen: final != nil, elapsed: consumerElapsed)
+            try PackageProcessObservation.write(processReport)
             return result
         }
 

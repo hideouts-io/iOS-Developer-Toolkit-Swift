@@ -92,7 +92,8 @@ jobs:
           xcrun swiftc -swift-version 6 -warnings-as-errors -parse-as-library \
             -I "$RUNNER_TEMP/dd/Build/Products/Debug" \
             "$RUNNER_TEMP/dd/Build/Products/Debug/ToolkitCore.o" \
-            scripts/PackageInspectionFixtures.swift -o "$RUNNER_TEMP/package-fixtures"
+            scripts/PackageInspectionFixtures.swift scripts/PackageProcessObservation.swift \
+            -o "$RUNNER_TEMP/package-fixtures"
       - name: Prepare one owned package simulator and immutable package inputs
         id: prepare_package
         run: |

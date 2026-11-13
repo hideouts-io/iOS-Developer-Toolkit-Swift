@@ -406,12 +406,16 @@ public actor DeviceDiscovery {
         }
     }
 
+    /// A cancelled refresh cannot replace the last completed simulator snapshot.
     private func refreshSimulators() async {
-        guard let client = configuration.simulators else { return }
+        guard !Task.isCancelled, let client = configuration.simulators else { return }
         do {
-            simulatorRecords = try await client.list()
+            let records = try await client.list()
+            guard !Task.isCancelled else { return }
+            simulatorRecords = records
             snapshot.simulators = .available(count: simulatorRecords.filter(\.isAvailable).count)
         } catch {
+            guard !Task.isCancelled else { return }
             simulatorRecords = []
             let reason = (error as? ToolkitError).map { $0.kind == .toolMissing ? "Xcode is not installed, so simulators are unavailable." : $0.message } ?? error.localizedDescription
             snapshot.simulators = .unavailable(reason: reason)

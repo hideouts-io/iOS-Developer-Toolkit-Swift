@@ -87,6 +87,122 @@ jobs:
             -configuration Debug -destination 'platform=macOS' \
             -derivedDataPath "$RUNNER_TEMP/dd" -resultBundlePath "$RUNNER_TEMP/UITests.xcresult" \
             test-without-building
+      - name: Build the package fixture host
+        run: |
+          xcrun swiftc -swift-version 6 -warnings-as-errors -parse-as-library \
+            -I "$RUNNER_TEMP/dd/Build/Products/Debug" \
+            "$RUNNER_TEMP/dd/Build/Products/Debug/ToolkitCore.o" \
+            scripts/PackageInspectionFixtures.swift scripts/PackageProcessObservation.swift \
+            -o "$RUNNER_TEMP/package-fixtures"
+      - name: Prepare one owned package simulator and immutable package inputs
+        id: prepare_package
+        run: |
+          "$RUNNER_TEMP/package-fixtures" prepare "$RUNNER_TEMP/package-fixtures-data"
+          python3 - "$RUNNER_TEMP/package-fixtures-data/environment.env" <<'PY'
+          import os
+          import sys
+          import uuid
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= 8192:
+              raise SystemExit("The package fixture environment must be a bounded regular file.")
+          values = {}
+          for line in path.read_text().splitlines():
+              key, separator, value = line.partition("=")
+              if not separator or not value or key in values or "\r" in value or "\x00" in value:
+                  raise SystemExit("The package fixture environment has an invalid or duplicate entry.")
+              values[key] = value
+          expected_keys = {"IDT_PACKAGE_FIXTURE_DIRECTORY", "IDT_PACKAGE_FIXTURE_SIMULATOR", "IDT_PACKAGE_FIXTURE_OWNER", "IDT_PACKAGE_FIXTURE_VALID", "IDT_PACKAGE_FIXTURE_VALID_B", "IDT_PACKAGE_FIXTURE_INVALID"}
+          if set(values) != expected_keys:
+              raise SystemExit("The package fixture environment has an unexpected schema.")
+          for key in ("IDT_PACKAGE_FIXTURE_SIMULATOR", "IDT_PACKAGE_FIXTURE_OWNER"):
+              if str(uuid.UUID(values[key])).upper() != values[key]:
+                  raise SystemExit("The package fixture environment requires canonical UUIDs.")
+          directory = (Path(os.environ["RUNNER_TEMP"]) / "package-fixtures-data").resolve(strict=True)
+          expected_paths = {"IDT_PACKAGE_FIXTURE_DIRECTORY": directory, "IDT_PACKAGE_FIXTURE_VALID": directory / "ValidSimulator.app", "IDT_PACKAGE_FIXTURE_VALID_B": directory / "ValidSimulatorB.app", "IDT_PACKAGE_FIXTURE_INVALID": directory / "Malformed.ipa"}
+          for key, expected in expected_paths.items():
+              candidate = Path(values[key])
+              if not candidate.is_absolute() or candidate.is_symlink() or candidate.resolve(strict=True) != expected:
+                  raise SystemExit("The package fixture environment contains an unexpected input path.")
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              for key in sorted(values):
+                  output.write("TEST_RUNNER_" + key + "=" + values[key] + "\n")
+          PY
+      - name: Hosted package recovery, late completion and incomplete reader Quit acceptance
+        env:
+          TEST_RUNNER_IDT_PACKAGE_UI_TESTS: "1"
+        run: |
+          xcodebuild -project iOSDeveloperToolkit.xcodeproj -scheme iOSDeveloperToolkit \
+            -configuration Debug -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/dd" -resultBundlePath "$RUNNER_TEMP/PackageUITests.xcresult" \
+            -only-testing:iOSDeveloperToolkitUITests/PackageInspectionUITests test-without-building
+          xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/PackageUITests.xcresult" \
+            > "$RUNNER_TEMP/PackageUITests-summary.json"
+          python3 - "$RUNNER_TEMP/PackageUITests-summary.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          summary = json.loads(Path(sys.argv[1]).read_text())
+          expected = {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0}
+          if not isinstance(summary, dict) or any(type(summary.get(key)) is not int for key in expected):
+              raise SystemExit("Package acceptance did not produce valid execution counts.")
+          observed = {key: summary[key] for key in expected}
+          if observed != expected:
+              raise SystemExit(f"Package acceptance must execute and pass exactly one test: {observed}")
+          print(f"Native package acceptance executed: {observed}")
+          PY
+      - name: Independently verify package cleanup and original input integrity
+        run: |
+          xcrun xcresulttool export attachments --path "$RUNNER_TEMP/PackageUITests.xcresult" \
+            --output-path "$RUNNER_TEMP/package-ui-attachments"
+          python3 - "$RUNNER_TEMP/package-ui-attachments" "$RUNNER_TEMP/PackageUITests-cleanup-receipt.json" <<'PY'
+          import json
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          directory = Path(sys.argv[1]).resolve(strict=True)
+          manifest_path = directory / "manifest.json"
+          if manifest_path.is_symlink() or not manifest_path.is_file() or not 0 < manifest_path.stat().st_size <= 16_777_216:
+              raise SystemExit("The exported native attachment manifest is missing or invalid.")
+          manifest = json.loads(manifest_path.read_text())
+          if not isinstance(manifest, list) or not 0 < len(manifest) <= 64:
+              raise SystemExit("The exported native attachment manifest has an invalid test array.")
+          receipts = []
+          for test in manifest:
+              if not isinstance(test, dict) or not isinstance(test.get("attachments"), list):
+                  raise SystemExit("The exported native attachment manifest has an invalid test entry.")
+              if test.get("testIdentifier") != "PackageInspectionUITests/testPackageInspectionRecoveryAndNormalQuitCleanup()":
+                  continue
+              for attachment in test["attachments"]:
+                  if not isinstance(attachment, dict):
+                      raise SystemExit("The exported native attachment manifest has an invalid attachment entry.")
+                  name = attachment.get("suggestedHumanReadableName")
+                  if isinstance(name, str) and name.startswith("package-cleanup-receipt"):
+                      filename = attachment.get("exportedFileName")
+                      if not isinstance(filename, str) or re.fullmatch(r"[A-Za-z0-9_.-]{1,255}", filename) is None or filename in (".", ".."):
+                          raise SystemExit("The native cleanup receipt has an unsafe exported basename.")
+                      path = directory / filename
+                      if path.is_symlink() or not path.is_file() or path.resolve(strict=True).parent != directory or not 0 < path.stat().st_size <= 16384:
+                          raise SystemExit("The native cleanup receipt must be a bounded exported regular file.")
+                      receipts.append(path)
+          if len(receipts) != 1:
+              raise SystemExit("Native acceptance must retain exactly one actual package cleanup receipt.")
+          data = receipts[0].read_bytes()
+          receipt = json.loads(data)
+          if not isinstance(receipt, dict) or set(receipt) != {"preparedDirectories"}:
+              raise SystemExit("The actual native cleanup receipt has an invalid schema.")
+          with open(sys.argv[2], "xb") as output:
+              os.fchmod(output.fileno(), 0o600)
+              output.write(data)
+          PY
+          "$RUNNER_TEMP/package-fixtures" verify-cleanup "$RUNNER_TEMP/package-fixtures-data" "$RUNNER_TEMP/PackageUITests-cleanup-receipt.json"
+      - name: Verify cleanup of the owned package simulator
+        if: ${{ always() && (steps.prepare_package.outcome == 'success' || steps.prepare_package.outcome == 'failure' || steps.prepare_package.outcome == 'cancelled') }}
+        run: '"$RUNNER_TEMP/package-fixtures" cleanup "$RUNNER_TEMP/package-fixtures-data"'
       - name: Render every page at the default and minimum window sizes
         run: |
           scripts/check-layout.sh \
@@ -98,6 +214,9 @@ jobs:
           name: ui-test-results
           path: |
             ${{ runner.temp }}/UITests.xcresult
+            ${{ runner.temp }}/PackageUITests.xcresult
+            ${{ runner.temp }}/PackageUITests-summary.json
+            ${{ runner.temp }}/PackageUITests-cleanup-receipt.json
             ${{ runner.temp }}/layout
           if-no-files-found: ignore
 

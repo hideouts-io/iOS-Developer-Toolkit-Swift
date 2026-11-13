@@ -135,14 +135,14 @@ struct IPAInspectorTests {
         #expect(signing.succeeded, "\(signing.standardErrorText)")
         #expect(try await run("/usr/bin/zip", ["-qr", "signed.ipa", "Payload"], in: directory).succeeded)
 
-        let signed = try IPAInspector.inspect(directory.appendingPathComponent("signed.ipa"))
+        let signed = try await IPAInspector.inspectAsync(directory.appendingPathComponent("signed.ipa"))
         #expect(signed.signature.status == .valid, "\(signed.signature.detail)")
         #expect(signed.signature.identifier == "com.example.demo")
         #expect(signed.isInstallable)
 
         try Data("tampered".utf8).write(to: app.appendingPathComponent("resource.txt"))
         #expect(try await run("/usr/bin/zip", ["-qr", "tampered.ipa", "Payload"], in: directory).succeeded)
-        let tampered = try IPAInspector.inspect(directory.appendingPathComponent("tampered.ipa"))
+        let tampered = try await IPAInspector.inspectAsync(directory.appendingPathComponent("tampered.ipa"))
         #expect(tampered.signature.status == .invalid)
         #expect(!tampered.isInstallable)
     }

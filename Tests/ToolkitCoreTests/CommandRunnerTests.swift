@@ -101,10 +101,12 @@ struct CommandRunnerTests {
         defer { close(descriptor) }
         // The child acknowledges SIGTERM but waits for a test-controlled release before exit.
         // A FIFO makes each assertion depend on a real process state rather than a delay.
+        // After release, force-stop the owned sleep: its SIGTERM policy is not the parent's contract.
         let script = """
-        trap 'printf "cancel received\\n"; IFS= read -r release < "$1"; printf "after release\\n"; exit 0' TERM
+        trap 'printf "cancel received\\n"; IFS= read -r release < "$1"; printf "phase: fifo-read=%s\\n" "$?" >&2; kill -KILL "$child" 2>/dev/null; printf "phase: child-kill=%s\\n" "$?" >&2; wait "$child" 2>/dev/null; printf "phase: child-wait=%s\\n" "$?" >&2; printf "after release\\n"; exit 0' TERM
+        sleep 30 & child=$!
         printf 'ready:%s\\n' "$$"
-        IFS= read -r hold < "$1"
+        wait "$child"
         exit 1
         """
         let request = CommandRequest(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", script, "owned-command", barrier.path],
@@ -112,6 +114,7 @@ struct CommandRunnerTests {
         let cancellation = CommandCancellation()
         let (lines, delivered) = AsyncStream<String>.makeStream()
         let ended = LockedValue(false)
+        let diagnostics = LockedValue(Data())
         let task = Task<Void, Error> {
             defer { ended.withLock { $0 = true }; delivered.finish() }
             var buffered = ""
@@ -122,6 +125,8 @@ struct CommandRunnerTests {
                         delivered.yield(String(buffered[..<newline]))
                         buffered.removeSubrange(...newline)
                     }
+                } else if case .standardError(let data) = event {
+                    diagnostics.withLock { $0.append(data.prefix(max(0, 4096 - $0.count))) }
                 }
             }
         }
@@ -141,7 +146,7 @@ struct CommandRunnerTests {
         let release = Data("release\n".utf8)
         let written = release.withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) }
         #expect(written == release.count)
-        #expect(await iterator.next() == "after release")
+        #expect(await iterator.next() == "after release", "Owned child phases: \(String(decoding: diagnostics.current, as: UTF8.self))")
         do {
             try await task.value
             Issue.record("Expected cancellation after the child exited")

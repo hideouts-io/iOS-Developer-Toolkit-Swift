@@ -232,6 +232,7 @@ struct MainToolbar: ToolbarContent {
             } label: {
                 Label("Refresh Devices", systemImage: "arrow.clockwise")
             }
+            .labelStyle(.iconOnly)
             .help("Look for devices again (⌘R)")
             .disabled(model.isRefreshing)
             .accessibilityIdentifier("retry-scan")
@@ -240,6 +241,7 @@ struct MainToolbar: ToolbarContent {
             } label: {
                 Label("Action Palette", systemImage: "command")
             }
+            .labelStyle(.iconOnly)
             .help("Search every workspace and action (⌘K)")
             .accessibilityIdentifier("toolbar-action-palette")
             Menu {
@@ -255,6 +257,7 @@ struct MainToolbar: ToolbarContent {
             } label: {
                 Label("Workspace Controls", systemImage: "ellipsis.circle")
             }
+            .labelStyle(.iconOnly)
             .accessibilityIdentifier("workspace-controls")
         }
     }
@@ -289,6 +292,7 @@ struct TargetPicker: View {
                     } label: {
                         Label("\(device.name) — \(device.displayVersion)\(device.simulatorState == .booted ? " (running)" : "")", systemImage: "\(device.family.symbolName)")
                     }
+                    .accessibilityIdentifier("target-simulator-\(device.target.udid)")
                 }
             }
             if model.selectedDeviceID != nil {
@@ -302,6 +306,7 @@ struct TargetPicker: View {
                     Text(model.selectedDevice?.name ?? "Choose a Device")
                         .font(.headline)
                         .lineLimit(1)
+                        .truncationMode(.middle)
                     if let device = model.selectedDevice {
                         Text(device.kind.label)
                             .font(.caption2)
@@ -311,7 +316,9 @@ struct TargetPicker: View {
             }
         }
         .menuIndicator(.visible)
-        .fixedSize()
+        // Bound the complete menu so long target names cannot displace minimum-width controls.
+        .frame(width: 220)
+        .fixedSize(horizontal: false, vertical: true)
         .help("Choose the device or simulator that actions affect")
         .accessibilityIdentifier("target-picker")
     }

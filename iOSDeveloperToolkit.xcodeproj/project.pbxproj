@@ -15,6 +15,7 @@
 		1BEAAB3DA748A2FF696A37BE /* LiveLogsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD1BCA4BFD074C07318C65CC /* LiveLogsModel.swift */; };
 		244023633FC5B7270C45C371 /* ActionsViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64CADCDAC59205AFA532EF87 /* ActionsViews.swift */; };
 		25D059CF99AA7F74E66147F4 /* SmokeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2095C064BD8BE67389318E84 /* SmokeUITests.swift */; };
+		25EFD518CF902622809873B1 /* PackageInspectionUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AAA035D99201791C82AA906 /* PackageInspectionUITests.swift */; };
 		26019A7B916688FEE3A23585 /* LogViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B81EECBCB7D517436001EFF8 /* LogViews.swift */; };
 		296F9F5D4685AB10A7B27CA6 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 791078D9EF3EC6308839270F /* AppModel.swift */; };
 		42E12E11EB7BA75B9D50C3E8 /* ReconnectGuideView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B26E835D20074A0489176A15 /* ReconnectGuideView.swift */; };
@@ -58,6 +59,7 @@
 /* Begin PBXFileReference section */
 		117839C38E19BA74C82D8382 /* ReferenceViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReferenceViews.swift; sourceTree = "<group>"; };
 		192082EDB2AA8A31B4DE9A43 /* DeviceViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceViews.swift; sourceTree = "<group>"; };
+		1AAA035D99201791C82AA906 /* PackageInspectionUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PackageInspectionUITests.swift; sourceTree = "<group>"; };
 		2095C064BD8BE67389318E84 /* SmokeUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmokeUITests.swift; sourceTree = "<group>"; };
 		32872FC2AF66DD024EA035E2 /* FirmwareView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirmwareView.swift; sourceTree = "<group>"; };
 		3DDC0E48182D2C63DFB57618 /* SecurityAnalysisModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecurityAnalysisModel.swift; sourceTree = "<group>"; };
@@ -139,6 +141,7 @@
 		60C4D44F4E03EAEE6FC8028C /* UITests */ = {
 			isa = PBXGroup;
 			children = (
+				1AAA035D99201791C82AA906 /* PackageInspectionUITests.swift */,
 				2095C064BD8BE67389318E84 /* SmokeUITests.swift */,
 			);
 			path = UITests;
@@ -433,6 +436,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				25EFD518CF902622809873B1 /* PackageInspectionUITests.swift in Sources */,
 				25D059CF99AA7F74E66147F4 /* SmokeUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

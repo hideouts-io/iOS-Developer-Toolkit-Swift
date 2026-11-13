@@ -232,6 +232,7 @@ struct MainToolbar: ToolbarContent {
             } label: {
                 Label("Refresh Devices", systemImage: "arrow.clockwise")
             }
+            .labelStyle(.iconOnly)
             .help("Look for devices again (⌘R)")
             .disabled(model.isRefreshing)
             .accessibilityIdentifier("retry-scan")
@@ -240,6 +241,7 @@ struct MainToolbar: ToolbarContent {
             } label: {
                 Label("Action Palette", systemImage: "command")
             }
+            .labelStyle(.iconOnly)
             .help("Search every workspace and action (⌘K)")
             .accessibilityIdentifier("toolbar-action-palette")
             Menu {
@@ -255,6 +257,7 @@ struct MainToolbar: ToolbarContent {
             } label: {
                 Label("Workspace Controls", systemImage: "ellipsis.circle")
             }
+            .labelStyle(.iconOnly)
             .accessibilityIdentifier("workspace-controls")
         }
     }
@@ -310,12 +313,12 @@ struct TargetPicker: View {
                             .foregroundStyle(device.kind == .simulator ? Color.purple : (device.kind == .demo ? Color.orange : Color.blue))
                     }
                 }
-                // Long target names must leave room for navigation at the minimum window width.
-                .frame(maxWidth: 220, alignment: .leading)
             }
         }
         .menuIndicator(.visible)
-        .fixedSize()
+        // Bound the complete menu so long target names cannot displace minimum-width controls.
+        .frame(width: 220)
+        .fixedSize(horizontal: false, vertical: true)
         .help("Choose the device or simulator that actions affect")
         .accessibilityIdentifier("target-picker")
     }

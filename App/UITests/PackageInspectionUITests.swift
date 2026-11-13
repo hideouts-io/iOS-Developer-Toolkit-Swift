@@ -355,6 +355,7 @@ final class PackageInspectionUITests: XCTestCase {
         wait(simulator, predicate: "exists == true AND hittable == true", timeout: 10)
         simulator.click()
         wait(simulator, predicate: "exists == false", timeout: 10)
+        wait(picker, predicate: "exists == true AND hittable == true", timeout: 10)
         XCTAssertFalse(element("install-package").exists)
     }
 

@@ -208,6 +208,98 @@ struct AppPackagePreparationTests {
             #expect(try Data(contentsOf: app.appendingPathComponent(filename)) == original)
         }
     }
+
+    // The real lease holds the shared inspection queue; run this case alone after the full suite.
+    @Test(.timeLimit(.minutes(5)), .enabled(if: ProcessInfo.processInfo.environment["IDT_PACKAGE_READER_EXPIRY_TESTS"] == "1"))
+    func nativeReaderLeaseExpiresAndRemovesItsPrivateCopy() async throws {
+        let root = try SecureFileIO.makeTemporaryDirectory(prefix: "prepared-reader-expiry")
+        defer { removeTestItem(root) }
+        let app = try makeApp(root, name: "ExpiredReaderDemo", platform: "iPhoneSimulator")
+        try await sign(app, in: root)
+        let filenames: [String] = ["Info.plist", "ExpiredReaderDemo", "resource.txt"]
+        let originals: [Data] = try filenames.map { try Data(contentsOf: app.appendingPathComponent($0)) }
+        let clock = ContinuousClock()
+        let (events, continuation) = AsyncStream<(snapshot: PackageInspectionReaderAcceptance.Snapshot, instant: ContinuousClock.Instant)>.makeStream()
+        let reader = PackageInspectionReaderAcceptance(observer: { continuation.yield(($0, clock.now)) })
+        var heldDirectory: URL?
+        defer {
+            if let directory = heldDirectory {
+                var metadata = stat()
+                let result = lstat(directory.path, &metadata)
+                let code = errno
+                if result == 0 { removeTestItem(directory) }
+                else { #expect(code == ENOENT) }
+            }
+        }
+
+        try await withThrowingTaskGroup(of: PreparedAppPackage.self) { group in
+            group.addTask {
+                defer { continuation.finish() }
+                return try await PreparedAppPackage.prepareAsyncForReaderAcceptance(app, reader: reader)
+            }
+            do {
+                let held = try await withTimeout(10, operation: "observe the native reader before natural expiry") {
+                    for await event in events {
+                        if event.snapshot.phase == .nativeHandleHeldBeforeValidation { return event }
+                    }
+                    throw ToolkitError(.internalInconsistency, message: "The native reader ended before its lease could be observed.", recovery: nil, technicalDetail: nil)
+                }
+                let directory = try #require(held.snapshot.directory)
+                let copy = try #require(held.snapshot.packageURL)
+                heldDirectory = directory
+                #expect(held.snapshot.originalURL == app)
+                #expect(!held.snapshot.cancellationRequested)
+                #expect(held.snapshot.signatureStatus == nil)
+                var metadata = stat()
+                #expect(lstat(directory.path, &metadata) == 0)
+                #expect(metadata.st_mode & S_IFMT == S_IFDIR)
+                #expect(metadata.st_uid == getuid())
+                #expect(metadata.st_mode & 0o777 == 0o700)
+                for (filename, original) in zip(filenames, originals) {
+                    #expect(try Data(contentsOf: copy.appendingPathComponent(filename)) == original)
+                }
+
+                let expired = try await withTimeout(200, operation: "observe the real 180-second reader lease expiry") {
+                    for await event in events {
+                        if event.snapshot.phase == .expired { return event }
+                    }
+                    throw ToolkitError(.internalInconsistency, message: "The native reader ended without natural lease expiry.", recovery: nil, technicalDetail: nil)
+                }
+                #expect(held.instant.duration(to: expired.instant) >= .seconds(180))
+                #expect(expired.snapshot.directory == directory)
+                #expect(!expired.snapshot.cancellationRequested)
+                #expect(expired.snapshot.signatureStatus == nil)
+
+                // Expiry is announced before cleanup. Join the worker's actual result first.
+                var observedWorkerTimeout = false
+                do {
+                    if let unexpected = try await group.next() {
+                        Issue.record("An expired native reader returned an installable preparation.")
+                        try unexpected.remove()
+                    }
+                } catch let error as ToolkitError {
+                    guard error.kind == .timedOut else { throw error }
+                    observedWorkerTimeout = true
+                }
+                #expect(observedWorkerTimeout)
+                #expect(reader.snapshot.phase == .expired)
+                #expect(reader.snapshot.directory == directory)
+                #expect(!reader.snapshot.cancellationRequested)
+                #expect(reader.snapshot.signatureStatus == nil)
+                let removal = lstat(directory.path, &metadata)
+                let removalError = errno
+                #expect(removal == -1)
+                #expect(removalError == ENOENT)
+                for (filename, original) in zip(filenames, originals) {
+                    #expect(try Data(contentsOf: app.appendingPathComponent(filename)) == original)
+                }
+            } catch {
+                group.cancelAll()
+                reader.finishAfterFailure()
+                throw error
+            }
+        }
+    }
 #endif
 
     private enum ChangedLocation: String, CaseIterable {

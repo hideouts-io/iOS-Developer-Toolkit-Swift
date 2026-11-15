@@ -37,6 +37,35 @@ jobs:
         run: swift build --build-tests -Xswiftc -warnings-as-errors
       - name: Test
         run: swift test -Xswiftc -warnings-as-errors
+      - name: Verify natural native reader lease expiry
+        env:
+          IDT_PACKAGE_READER_EXPIRY_TESTS: "1"
+        run: |
+          swift test -Xswiftc -warnings-as-errors \
+            --filter nativeReaderLeaseExpiresAndRemovesItsPrivateCopy \
+            --xunit-output "$RUNNER_TEMP/reader-expiry.xml"
+          python3 - "$RUNNER_TEMP/reader-expiry-swift-testing.xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= 1_048_576:
+              raise SystemExit("Native reader expiry requires a bounded regular Swift Testing report.")
+          data = path.read_bytes()
+          if b"<!DOCTYPE" in data or b"<!ENTITY" in data:
+              raise SystemExit("Native reader expiry report must not declare XML entities.")
+          report = ET.fromstring(data)
+          suites = report.findall("testsuite")
+          cases = report.findall(".//testcase")
+          expected = {"tests": "1", "errors": "0", "failures": "0", "skipped": "0"}
+          if report.tag != "testsuites" or len(suites) != 1 or any(suites[0].get(key) != value for key, value in expected.items()) or len(cases) != 1:
+              raise SystemExit("Native reader expiry must execute exactly one passing test with zero errors or skips.")
+          case = cases[0]
+          if case.get("classname") != "ToolkitFeaturesTests.AppPackagePreparationTests" or case.get("name") != "nativeReaderLeaseExpiresAndRemovesItsPrivateCopy()" or list(case):
+              raise SystemExit("Native reader expiry did not pass the required real lease test.")
+          print("Native reader expiry executed: 1 passed, 0 failed, 0 skipped.")
+          PY
       - name: Command-line tool smoke test
         run: |
           swift run idt --version

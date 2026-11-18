@@ -1,5 +1,6 @@
 import Darwin
 import DeviceKit
+import Dispatch
 import Foundation
 import Testing
 import ToolkitCore
@@ -198,6 +199,113 @@ struct AppPackagePreparationTests {
         #expect(reader.snapshot.signatureStatus == .valid)
         #expect(reader.snapshot.cancellationRequested)
         let directory = try #require(heldDirectory)
+        #expect(reader.snapshot.directory == directory)
+        var metadata = stat()
+        let removal = lstat(directory.path, &metadata)
+        let removalError = errno
+        #expect(removal == -1)
+        #expect(removalError == ENOENT)
+        for (filename, original) in zip(filenames, originals) {
+            #expect(try Data(contentsOf: app.appendingPathComponent(filename)) == original)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)), .enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/codesign")))
+    func failedCallerAbortsItsArmedNativeReaderBeforeItCanWait() async throws {
+        let root = try SecureFileIO.makeTemporaryDirectory(prefix: "prepared-armed-reader-failure")
+        defer { removeTestItem(root) }
+        let app = try makeApp(root, name: "ArmedReaderDemo", platform: "iPhoneSimulator")
+        try await sign(app, in: root)
+        let filenames: [String] = ["Info.plist", "ArmedReaderDemo", "resource.txt"]
+        let originals: [Data] = try filenames.map { try Data(contentsOf: app.appendingPathComponent($0)) }
+        let (events, continuation) = AsyncStream<PackageInspectionReaderAcceptance.Snapshot>.makeStream()
+        let arrival = DispatchSemaphore(value: 0)
+        defer { arrival.signal() }
+        let observerTimedOut = LockedValue(false)
+        let phases = LockedValue<[PackageInspectionReaderAcceptance.Phase]>([])
+        let reader = PackageInspectionReaderAcceptance(observer: { snapshot in
+            phases.withLock { $0.append(snapshot.phase) }
+            continuation.yield(snapshot)
+            // Only the native Dispatch worker pauses. begin and the synchronous cancellation
+            // handler also publish armed snapshots and must never wait on the caller.
+            if snapshot.phase == .armed, snapshot.packageURL != nil, !snapshot.cancellationRequested {
+                if arrival.wait(timeout: .now() + 10) == .timedOut {
+                    observerTimedOut.withLock { $0 = true }
+                }
+            }
+        })
+        let observedWorkerCancellation = LockedValue(false)
+        var openedDirectory: URL?
+        defer {
+            if let directory = openedDirectory {
+                var metadata = stat()
+                let result = lstat(directory.path, &metadata)
+                let code = errno
+                if result == 0 { removeTestItem(directory) }
+                else { #expect(code == ENOENT) }
+            }
+        }
+
+        var observedCallerFailure = false
+        do {
+            try await withThrowingTaskGroup(of: PreparedAppPackage.self) { group in
+                group.addTask {
+                    defer { continuation.finish() }
+                    do {
+                        let unexpected = try await PreparedAppPackage.prepareAsyncForReaderAcceptance(app, reader: reader)
+                        Issue.record("Armed reader failure teardown returned an installable preparation.")
+                        try unexpected.remove()
+                        return unexpected
+                    } catch let error as CancellationError {
+                        observedWorkerCancellation.withLock { $0 = true }
+                        throw error
+                    }
+                }
+                do {
+                    let opened = try await withTimeout(10, operation: "observe a real native handle before its reader waits") {
+                        for await snapshot in events {
+                            if snapshot.phase == .armed, snapshot.packageURL != nil { return snapshot }
+                        }
+                        throw ToolkitError(.internalInconsistency, message: "The native reader ended before its armed handle could be observed.", recovery: nil, technicalDetail: nil)
+                    }
+                    let directory = try #require(opened.directory)
+                    let copy = try #require(opened.packageURL)
+                    openedDirectory = directory
+                    #expect(opened.originalURL == app)
+                    #expect(!opened.cancellationRequested)
+                    #expect(opened.signatureStatus == nil)
+                    var metadata = stat()
+                    #expect(lstat(directory.path, &metadata) == 0)
+                    #expect(metadata.st_mode & S_IFMT == S_IFDIR)
+                    #expect(metadata.st_uid == getuid())
+                    #expect(metadata.st_mode & 0o777 == 0o700)
+                    for (filename, original) in zip(filenames, originals) {
+                        #expect(try Data(contentsOf: copy.appendingPathComponent(filename)) == original)
+                    }
+                    throw ReaderObservationFailure.interrupted
+                } catch {
+                    group.cancelAll()
+                    reader.finishAfterFailure()
+                    #expect(reader.snapshot.phase == .aborted)
+                    arrival.signal()
+                    throw error
+                }
+            }
+        } catch ReaderObservationFailure.interrupted {
+            observedCallerFailure = true
+        }
+
+        // Leaving the structured group joined the actual late worker before these checks.
+        #expect(observedCallerFailure)
+        #expect(observedWorkerCancellation.current)
+        #expect(!observerTimedOut.current)
+        #expect(reader.snapshot.phase == .aborted)
+        #expect(reader.snapshot.cancellationRequested)
+        #expect(reader.snapshot.signatureStatus == nil)
+        #expect(!phases.current.contains(.nativeHandleHeldBeforeValidation))
+        #expect(!phases.current.contains(.expired))
+        #expect(!phases.current.contains(.validationReturned))
+        let directory = try #require(openedDirectory)
         #expect(reader.snapshot.directory == directory)
         var metadata = stat()
         let removal = lstat(directory.path, &metadata)

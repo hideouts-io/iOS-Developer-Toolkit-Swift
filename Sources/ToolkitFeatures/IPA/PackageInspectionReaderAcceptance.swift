@@ -111,12 +111,23 @@ public struct PackageInspectionReaderAcceptance: Sendable {
     }
 
     func holdNativeHandle(bundle: URL) throws {
-        let update = try state.withLock { value -> Snapshot in
+        let opened = try state.withLock { value -> Snapshot in
             if value.phase == .aborted { throw CancellationError() }
-            guard value.phase == .armed, value.originalURL != nil else {
+            guard value.phase == .armed, value.originalURL != nil, value.packageURL == nil else {
                 throw ToolkitError(.internalInconsistency, message: "The native package reader acceptance gate is not armed.", recovery: "Inspect the acceptance launch and choose the genuine fixture again.", technicalDetail: nil)
             }
             value.packageURL = bundle
+            value.revision += 1
+            return value.snapshot
+        }
+        // This observer runs on the Dispatch worker with the real native handle alive.
+        // Failure teardown may close the armed gate before this worker starts waiting.
+        observer(opened)
+        let update = try state.withLock { value -> Snapshot in
+            if value.phase == .aborted { throw CancellationError() }
+            guard value.phase == .armed, value.packageURL == bundle else {
+                throw ToolkitError(.internalInconsistency, message: "The native package reader acceptance gate changed before waiting.", recovery: "Inspect the native acceptance failure before retrying.", technicalDetail: nil)
+            }
             value.phase = .nativeHandleHeldBeforeValidation
             value.revision += 1
             return value.snapshot

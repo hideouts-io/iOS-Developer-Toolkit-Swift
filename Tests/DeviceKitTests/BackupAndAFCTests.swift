@@ -103,7 +103,15 @@ struct BackupAndAFCTests {
                 #expect(try Data(contentsOf: destination).count == 3000)
                 let source = directory.appendingPathComponent("upload.ipa")
                 try SecureFileIO.writeNewFile(Data(repeating: 7, count: 2500), to: source)
-                try await afc.makeDirectory("/PublicStaging")
+                try await afc.ensureDirectory("/PublicStaging")
+                try await afc.ensureDirectory("/PublicStaging")
+                #expect(try await afc.fileInfo("/PublicStaging").isDirectory)
+                do {
+                    try await afc.ensureDirectory("/Downloads/readme.txt")
+                    Issue.record("A regular file was accepted as a staging directory")
+                } catch let error as ToolkitError {
+                    #expect(error.kind == .fileSystem)
+                }
                 try await afc.upload(source, to: "/PublicStaging/upload.ipa", chunkSize: 1000)
                 let walk = try await afc.walk("/")
                 #expect(walk.contains("/PublicStaging/upload.ipa"))
@@ -117,6 +125,36 @@ struct BackupAndAFCTests {
                 await afc.close()
             }
             #expect(await fileSystem.files["/PublicStaging/upload.ipa"]?.count == 2500)
+        }
+    }
+
+    @Test func ensureDirectoryPropagatesDeniedInspectionWithoutCreating() async throws {
+        try await withFakeDevice({ _ in }) { server in
+            let operations = LockedValue<[UInt64]>([])
+            server.register(service: AFCClient.mediaServiceName) { channel in
+                while try await channel.hasMoreData() {
+                    let header = try await channel.read(exactly: 40, timeout: 5)
+                    let length = Int(header.readLittleEndianUInt64(at: 8))
+                    let number = header.readLittleEndianUInt64(at: 24)
+                    let operation = header.readLittleEndianUInt64(at: 32)
+                    _ = try await channel.read(exactly: length - 40, timeout: 5)
+                    operations.withLock { $0.append(operation) }
+                    var status = Data()
+                    status.appendLittleEndian(UInt64(10))
+                    try await channel.write(AFCClient.encode(operation: 0x01, packetNumber: number, header: status, payload: Data()))
+                }
+            }
+            try await DeviceSession.with(server.target, usbmux: server.client) { session in
+                let afc = try await AFCClient.openMedia(session)
+                do {
+                    try await afc.ensureDirectory("/PublicStaging")
+                    Issue.record("A denied staging-directory inspection succeeded")
+                } catch let error as ToolkitError {
+                    #expect(error.kind == .permissionDenied)
+                }
+                await afc.close()
+            }
+            #expect(operations.current == [0x0A])
         }
     }
 

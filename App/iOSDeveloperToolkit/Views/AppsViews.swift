@@ -107,14 +107,105 @@ struct InstallAppView: View {
                 HStack {
                     Button("Choose .ipa or .app…") {
                         if let url = FilePanels.chooseFile(title: "Choose an app package", allowedExtensions: ["ipa", "app"]) {
-                            Task { await install.choose(url, app: model) }
+                            Task {
+                                await install.choose(url, app: model)
+#if DEBUG
+                                if model.packageAcceptanceTarget != nil { install.packageChoiceReturned(url) }
+#endif
+                            }
                         }
                     }
+                    .disabled(install.isInstalling)
                     .accessibilityIdentifier("choose-package")
                     if let url = install.packageURL {
                         Text(url.lastPathComponent).font(.callout.monospaced()).lineLimit(1).truncationMode(.middle)
+                            .accessibilityIdentifier("package-selection")
                     }
                 }
+            }
+#if DEBUG
+            if model.packageAcceptanceTarget != nil {
+                VStack(alignment: .leading, spacing: 2) {
+                    let targets = model.simulatorDevices
+                    Text(model.snapshot.simulators.isAvailable && targets.count == 1 && targets.first?.simulatorState == .booted ? "ready" : "waiting")
+                        .accessibilityIdentifier("package-target-readiness")
+                    Text(model.snapshot.simulators.summary)
+                        .accessibilityIdentifier("package-discovery-status")
+                    Text(install.preparedPackage?.directory.path ?? "none")
+                        .accessibilityIdentifier("package-prepared-directory")
+                    Text(install.preparedPackage?.id.uuidString ?? "none")
+                        .accessibilityIdentifier("package-prepared-id")
+                    Text(install.preparedPackage?.originalURL.path ?? "none")
+                        .accessibilityIdentifier("package-original-url")
+                    Text(String(model.operations.count))
+                        .accessibilityIdentifier("package-active-operations")
+                    Text(install.completionAcceptanceState.rawValue)
+                        .accessibilityIdentifier("package-completion-state")
+                    Text(install.heldPreparationDirectory ?? "none")
+                        .accessibilityIdentifier("package-held-directory")
+                    Text(install.heldPreparationID?.uuidString ?? "none")
+                        .accessibilityIdentifier("package-held-id")
+                    Text(install.heldPreparationOriginalURL?.path ?? "none")
+                        .accessibilityIdentifier("package-held-original-url")
+                    Text(install.heldPreparationWasCancelled.map(String.init) ?? "pending")
+                        .accessibilityIdentifier("package-held-cancelled")
+                    HStack {
+                        Button("Arm completed package acceptance") {
+                            do { try install.armCompletionAcceptance(app: model) }
+                            catch { model.present(error) }
+                        }
+                        .disabled(install.completionAcceptanceState != .idle)
+                        .accessibilityIdentifier("package-completion-arm")
+                        Button("Release completed package") {
+                            do { try install.releaseCompletionAcceptance(app: model) }
+                            catch { model.present(error) }
+                        }
+                        .disabled(install.completionAcceptanceState != .held)
+                        .accessibilityIdentifier("package-completion-release")
+                    }
+                    Text(model.isTerminating ? "true" : "false")
+                        .accessibilityIdentifier("package-is-terminating")
+                    Text(install.readerSnapshot?.phase.rawValue ?? "idle")
+                        .accessibilityIdentifier("package-reader-phase")
+                    Text(install.readerSnapshot?.directory?.path ?? "none")
+                        .accessibilityIdentifier("package-reader-directory")
+                    Text(install.readerSnapshot?.packageURL?.path ?? "none")
+                        .accessibilityIdentifier("package-reader-package-url")
+                    Text(install.readerSnapshot?.originalURL?.path ?? "none")
+                        .accessibilityIdentifier("package-reader-original-url")
+                    Text(install.readerSnapshot?.cancellationRequested == true ? "true" : "false")
+                        .accessibilityIdentifier("package-reader-cancelled")
+                    Text(install.readerSnapshot?.signatureStatus?.rawValue ?? "pending")
+                        .accessibilityIdentifier("package-reader-signature-status")
+                    Text(install.readerChoiceReturned ? "true" : "false")
+                        .accessibilityIdentifier("package-reader-choice-returned")
+                    HStack {
+                        Button("Arm native reader acceptance") {
+                            do { try install.armReaderAcceptance(app: model) }
+                            catch { model.present(error) }
+                        }
+                        .disabled(install.readerSnapshot != nil)
+                        .accessibilityIdentifier("package-reader-arm")
+                        Button("Release native reader") {
+                            do { try install.releaseReaderAcceptance(app: model) }
+                            catch { model.present(error) }
+                        }
+                        .disabled(install.readerSnapshot?.phase != .nativeHandleHeldBeforeValidation)
+                        .accessibilityIdentifier("package-reader-release")
+                    }
+                }
+                .font(.caption.monospaced())
+                .lineLimit(1)
+                .truncationMode(.middle)
+            }
+#endif
+            if install.isInspecting {
+                ProgressView("Inspecting the selected package…")
+                    .accessibilityIdentifier("package-inspection-running")
+            } else if let error = install.inspectionError {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("package-inspection-failed")
             }
             if let inspection = install.inspection {
                 InspectionView(inspection: inspection, device: model.selectedDevice)
@@ -130,35 +221,31 @@ struct InstallAppView: View {
                         Toggle("Install as developer package", isOn: $install.installAsDeveloperPackage)
                             .help("Asks iOS to treat the package as a development build. Only meaningful for development-signed apps.")
                     }
-                    let blocked = blockReason(device)
+                    let blocked = install.blockReason(for: device)
                     if let blocked {
                         Label(blocked, systemImage: "hand.raised").foregroundStyle(.orange)
                     }
                     Button("Install on \(device.name)…") {
-                        confirmation = PendingConfirmation(title: "Install \(install.inspection?.appName ?? install.packageURL?.lastPathComponent ?? "app")?", detail: "The app will be installed on \(device.name). iOS still checks the signature, provisioning, and entitlements.", requirement: .make(for: .deviceChange, target: device.target), target: device.target) {
-                            Task { await install.install(app: model, device: device) }
-                        }
+                        do {
+                            let plan = try install.prepareInstallation(for: device, app: model)
+                            let developerOption = plan.device.kind == .physical && !plan.device.supportsCoreDevice
+                                ? " Install as developer package: \(plan.developerPackage ? "on" : "off")."
+                                : ""
+                            confirmation = PendingConfirmation(title: "Install \(plan.package.appName)?", detail: "\(plan.package.originalURL.lastPathComponent) will be installed on \(plan.device.name).\(developerOption) iOS still checks the signature, provisioning, and entitlements.", requirement: .make(for: .deviceChange, target: plan.device.target), target: plan.device.target) {
+                                Task { await install.install(plan, app: model) }
+                            }
+                        } catch { model.present(error) }
                     }
                     .disabled(blocked != nil)
+                    .accessibilityIdentifier("install-package")
                 }
             }
         }
+        .onChange(of: model.selectedTarget) { _, _ in confirmation = nil }
+        .onChange(of: install.preparedPackage?.id) { _, _ in confirmation = nil }
+        .onChange(of: install.installAsDeveloperPackage) { _, _ in confirmation = nil }
         .sheet(item: $confirmation) { pending in
             ConfirmationSheet(title: pending.title, detail: pending.detail, requirement: pending.requirement, target: pending.target, commandPreview: nil, onConfirm: pending.action)
-        }
-    }
-
-    private func blockReason(_ device: Device) -> String? {
-        let install = model.install
-        switch device.kind {
-        case .demo: return "Demo Mode cannot install apps."
-        case .simulator:
-            if !install.isAppBundle { return "Simulators install .app bundles built for the simulator, not .ipa files." }
-            if device.simulatorState != .booted { return "Start the simulator first." }
-            return nil
-        case .physical:
-            if let inspection = install.inspection, !inspection.isInstallable { return inspection.installabilityExplanation }
-            return nil
         }
     }
 }

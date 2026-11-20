@@ -51,11 +51,30 @@ struct PackageProcessObservation: Sendable {
         var dispatch = 0
         var processWait = 0
     }
+    enum CommandOutcome: String, Encodable, Sendable { case succeeded, failed, timedOut, cancelled, unavailable }
+    enum DeliveryStage: String, Encodable, Sendable { case noOutput, outputReceived, resultReceived }
+    enum ReportState: String, Encodable, Sendable { case notRead, empty, incomplete, complete, identityUnverified }
+    struct CommandEvidence: Encodable, Sendable {
+        let elapsedMilliseconds: Int64
+        let standardOutputBytes: Int
+        let standardErrorBytes: Int
+        let deliveryStage: DeliveryStage
+        let outcome: CommandOutcome
+        let exitCode: Int32?
+        let signal: Int32?
+    }
+    private struct SampleCommand: Sendable {
+        let evidence: CommandEvidence
+        let failure: Failure?
+    }
     struct Sample: Encodable, Sendable {
         let target: Target
         let elapsedMilliseconds: Int64
         let status: SampleStatus
         let counts: Counts?
+        let command: CommandEvidence?
+        let reportBytes: Int?
+        let reportState: ReportState
     }
     struct Report: Encodable, Sendable {
         let helperPID: Int32
@@ -196,6 +215,10 @@ struct PackageProcessObservation: Sendable {
     private func sample(_ expected: Identity, target: Target, started: ContinuousClock.Instant, clock: ContinuousClock) async -> (sample: Sample, failures: [Failure]) {
         let elapsed = Self.milliseconds(started.duration(to: clock.now))
         var directory: URL?
+        var report: URL?
+        var command: CommandEvidence?
+        var reportBytes: Int?
+        var reportState = ReportState.notRead
         var counts: Counts?
         var status = SampleStatus.unavailable
         var failures: [Failure] = []
@@ -207,49 +230,103 @@ struct PackageProcessObservation: Sendable {
             let file = root.appendingPathComponent("sample.txt")
             try SecureFileIO.writeNewFile(Data(), to: file, mode: 0o600)
             let request = CommandRequest(executable: URL(fileURLWithPath: "/usr/bin/sample"),
-                                         arguments: [String(expected.pid), "1", "10", "-mayDie", "-file", file.path],
+                                         arguments: [String(expected.pid), "1", "10", "-file", file.path],
                                          environment: CommandEnvironment.minimal(adding: [:]), workingDirectory: root, standardInput: nil,
                                          timeout: 8, outputLimit: 8192, displayName: "postboot process sample", terminationGracePeriod: 1)
-            let result = try await runSample(request)
-            try Task.checkCancellation()
-            guard result.succeeded else { throw Self.fault(.sample, .commandFailed, result.exitCode) }
-            guard try Self.identity(expected.pid).identity == expected else { throw Self.fault(.sample, .changedIdentity, nil) }
-            counts = try Self.parse(Self.read(file))
-            status = .captured
+            let result = await runSample(request)
+            command = result.evidence
+            report = file
+            if let failure = result.failure { failures.append(failure) }
+            if result.evidence.outcome == .cancelled || Task.isCancelled { status = .cancelled }
         } catch is CancellationError {
             status = .cancelled
         } catch let error as Fault {
             failures.append(error.failure)
             if let close = error.closeFailure { failures.append(close) }
         } catch let error as ToolkitError {
-            if Task.isCancelled { status = .cancelled }
-            else { failures.append(Failure(stage: .sample, code: .commandFailed, systemCode: nil, toolkitKind: error.kind.rawValue)) }
+            failures.append(Failure(stage: .sample, code: .commandFailed, systemCode: nil, toolkitKind: error.kind.rawValue))
+            if error.kind == .cancelled { status = .cancelled }
         } catch {
             failures.append(Failure(stage: .sample, code: .unavailable, systemCode: nil, toolkitKind: nil))
+        }
+        // runSample joined its owned consumer before publishing this file for inspection.
+        // A failed command may leave useful evidence; it must still remain unavailable.
+        if let report {
+            do {
+                let data = try Self.read(report)
+                reportBytes = data.count
+                if data.isEmpty { reportState = .empty }
+                else {
+                    reportState = .identityUnverified
+                    guard try Self.identity(expected.pid).identity == expected else { throw Self.fault(.sample, .changedIdentity, nil) }
+                    reportState = .incomplete
+                    counts = try Self.parse(data)
+                    reportState = .complete
+                    if command?.outcome == .succeeded, status != .cancelled { status = .captured }
+                }
+            } catch let error as Fault {
+                failures.append(error.failure)
+                if let close = error.closeFailure { failures.append(close) }
+            } catch {
+                failures.append(Failure(stage: .read, code: .unreadable, systemCode: nil, toolkitKind: nil))
+            }
         }
         if let directory {
             do { try FileManager.default.removeItem(at: directory) }
             catch { failures.append(Failure(stage: .cleanup, code: .cleanupFailed, systemCode: nil, toolkitKind: nil)) }
         }
-        return (Sample(target: target, elapsedMilliseconds: elapsed, status: status, counts: counts), failures)
+        return (Sample(target: target, elapsedMilliseconds: elapsed, status: status, counts: counts,
+                       command: command, reportBytes: reportBytes, reportState: reportState), failures)
     }
 
     /// Cancellation signals the sampler while its independent consumer retains ownership
-    /// through actual exit. The caller can then remove the report without a live writer.
-    private func runSample(_ request: CommandRequest) async throws -> CommandResult {
+    /// through actual exit. Expected failures retain bounded evidence without raw output.
+    private func runSample(_ request: CommandRequest) async -> SampleCommand {
         let cancellation = CommandCancellation()
         let consumer = Task.detached(priority: .utility) {
+            let clock = ContinuousClock()
+            let started = clock.now
+            var standardOutputBytes = 0
+            var standardErrorBytes = 0
             var final: CommandResult?
-            for try await event in runner.stream(request, cancellation: cancellation) {
-                if case .finished(let result) = event { final = result }
+            var outcome = CommandOutcome.unavailable
+            var failure: Failure?
+            do {
+                for try await event in runner.stream(request, cancellation: cancellation) {
+                    switch event {
+                    case .standardOutput(let data): standardOutputBytes += data.count
+                    case .standardError(let data): standardErrorBytes += data.count
+                    case .finished(let result): final = result
+                    }
+                }
+                guard let final else {
+                    throw ToolkitError(.internalInconsistency, message: "The process sampler ended without a result.", recovery: "Inspect the sampler's lifecycle.", technicalDetail: nil)
+                }
+                outcome = final.succeeded ? .succeeded : .failed
+                if !final.succeeded { failure = Failure(stage: .sample, code: .commandFailed, systemCode: final.exitCode, toolkitKind: nil) }
+            } catch let error as ToolkitError {
+                switch error.kind {
+                case .timedOut: outcome = .timedOut
+                case .cancelled: outcome = .cancelled
+                default: outcome = .failed
+                }
+                failure = Failure(stage: .sample, code: .commandFailed, systemCode: nil, toolkitKind: error.kind.rawValue)
+            } catch is CancellationError {
+                outcome = .cancelled
+                failure = Failure(stage: .sample, code: .commandFailed, systemCode: nil, toolkitKind: "cancelled")
+            } catch {
+                failure = Failure(stage: .sample, code: .unavailable, systemCode: nil, toolkitKind: nil)
             }
-            guard let final else {
-                throw ToolkitError(.internalInconsistency, message: "The process sampler ended without a result.", recovery: "Inspect the sampler's lifecycle.", technicalDetail: nil)
-            }
-            return final
+            let signal: Int32?
+            if let final, case .signaled(let value) = final.termination { signal = value }
+            else { signal = nil }
+            let stage: DeliveryStage = final != nil ? .resultReceived : (standardOutputBytes > 0 || standardErrorBytes > 0 ? .outputReceived : .noOutput)
+            return SampleCommand(evidence: CommandEvidence(elapsedMilliseconds: Self.milliseconds(started.duration(to: clock.now)),
+                                                         standardOutputBytes: standardOutputBytes, standardErrorBytes: standardErrorBytes,
+                                                         deliveryStage: stage, outcome: outcome, exitCode: final?.exitCode, signal: signal), failure: failure)
         }
-        return try await withTaskCancellationHandler {
-            try await consumer.value
+        return await withTaskCancellationHandler {
+            await consumer.value
         } onCancel: {
             cancellation.cancel()
         }
@@ -265,10 +342,14 @@ struct PackageProcessObservation: Sendable {
             guard fstat(descriptor, &metadata) == 0 else { throw fault(.read, .unreadable, errno) }
             guard metadata.st_mode & S_IFMT == S_IFREG, metadata.st_nlink == 1,
                   metadata.st_uid == getuid(), metadata.st_mode & 0o777 == 0o600,
-                  metadata.st_size > 0, metadata.st_size <= 2_097_152 else { throw fault(.read, .invalidMetadata, nil) }
-            guard let data = try handle.read(upToCount: 2_097_153) else { throw fault(.read, .unreadable, nil) }
-            guard !data.isEmpty, data.count <= 2_097_152 else { throw fault(.read, .oversized, nil) }
-            outcome = .success(data)
+                  metadata.st_size >= 0 else { throw fault(.read, .invalidMetadata, nil) }
+            guard metadata.st_size <= 2_097_152 else { throw fault(.read, .oversized, nil) }
+            if metadata.st_size == 0 { outcome = .success(Data()) }
+            else {
+                guard let data = try handle.read(upToCount: 2_097_153) else { throw fault(.read, .unreadable, nil) }
+                guard !data.isEmpty, data.count <= 2_097_152 else { throw fault(.read, .oversized, nil) }
+                outcome = .success(data)
+            }
         } catch let error as Fault { outcome = .failure(error) }
         catch { outcome = .failure(fault(.read, .unreadable, nil)) }
         do { try handle.close() }

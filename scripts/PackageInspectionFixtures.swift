@@ -137,7 +137,7 @@ struct PackageInspectionFixtures {
     static func main() async throws {
         let arguments = CommandLine.arguments
         guard arguments.count >= 3, arguments.count <= 4 else {
-            throw failure("Use package-fixtures prepare DIRECTORY, verify-cleanup DIRECTORY RECEIPT_JSON, or cleanup DIRECTORY.", cause: nil)
+            throw failure("Use package-fixtures prepare|cleanup|allocate-comparison|boot-comparison|query-before|query-after|report-comparison DIRECTORY, or verify-cleanup DIRECTORY RECEIPT_JSON.", cause: nil)
         }
         let directory = URL(fileURLWithPath: arguments[2], isDirectory: true).standardizedFileURL
         guard let temporary = ProcessInfo.processInfo.environment["RUNNER_TEMP"],
@@ -152,6 +152,16 @@ struct PackageInspectionFixtures {
             try await verifyCleanup(directory: directory, receipt: URL(fileURLWithPath: arguments[3]), runner: runner)
         case "cleanup" where arguments.count == 3:
             try await cleanup(directory: directory, runner: runner)
+        case "allocate-comparison" where arguments.count == 3:
+            try await allocateComparison(directory: directory, runner: runner)
+        case "boot-comparison" where arguments.count == 3:
+            try await bootComparison(directory: directory, runner: runner)
+        case "query-before" where arguments.count == 3:
+            try await compareQuery(directory: directory, stage: .before, runner: runner)
+        case "query-after" where arguments.count == 3:
+            try await compareQuery(directory: directory, stage: .after, runner: runner)
+        case "report-comparison" where arguments.count == 3:
+            try reportComparison(directory: directory)
         default:
             throw failure("The fixture command or its argument count is invalid.", cause: nil)
         }
@@ -357,7 +367,11 @@ struct PackageInspectionFixtures {
     }
 
     static func simulators(runner: some CommandRunning) async throws -> [Simulator] {
-        let json = try JSONValue.parse(try await command(["simctl", "list", "devices", "--json"], timeout: 60, runner: runner).standardOutput)
+        try simulatorRecords(try await command(["simctl", "list", "devices", "--json"], timeout: 60, runner: runner).standardOutput)
+    }
+
+    static func simulatorRecords(_ data: Data) throws -> [Simulator] {
+        let json = try JSONValue.parse(data)
         guard let groups = json["devices"]?.object else { throw failure("simctl returned no device groups.", cause: nil) }
         return try groups.keys.sorted().flatMap { runtime -> [Simulator] in
             guard let devices = groups[runtime]?.array else { throw failure("simctl returned a non-array device group.", cause: nil) }

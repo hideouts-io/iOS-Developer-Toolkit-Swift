@@ -121,7 +121,7 @@ jobs:
           xcrun swiftc -swift-version 6 -warnings-as-errors -parse-as-library \
             -I "$RUNNER_TEMP/dd/Build/Products/Debug" \
             "$RUNNER_TEMP/dd/Build/Products/Debug/ToolkitCore.o" \
-            scripts/PackageInspectionFixtures.swift scripts/PackageProcessObservation.swift \
+            scripts/PackageInspectionFixtures.swift scripts/PackageProcessObservation.swift scripts/SimulatorQueryComparison.swift \
             -o "$RUNNER_TEMP/package-fixtures"
       - name: Prepare one owned package simulator and immutable package inputs
         id: prepare_package
@@ -267,6 +267,90 @@ jobs:
         env:
           IDT_SIMULATOR_TESTS: "1"
         run: swift test --filter RealSimulator
+
+  simulator-query-comparison:
+    name: Isolated simulator query comparison
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Select Xcode
+        run: scripts/ci-select-xcode.sh
+      - name: Build the headless comparison host
+        id: host
+        run: |
+          swift build --build-system native --target ToolkitCore -Xswiftc -warnings-as-errors
+          idt_bin="$(swift build --build-system native --show-bin-path)"
+          idt_objects=("$idt_bin"/ToolkitCore.build/*.o)
+          test -f "${idt_objects[0]}"
+          xcrun swiftc -swift-version 6 -warnings-as-errors -parse-as-library \
+            -I "$idt_bin/Modules" "${idt_objects[@]}" \
+            scripts/PackageInspectionFixtures.swift scripts/PackageProcessObservation.swift scripts/SimulatorQueryComparison.swift \
+            -o "$RUNNER_TEMP/query-comparison"
+      - name: Allocate a separate owned simulator without booting it
+        id: allocate
+        run: '"$RUNNER_TEMP/query-comparison" allocate-comparison "$RUNNER_TEMP/query-comparison-data"'
+      - name: Swift query before boot
+        id: swift_before
+        if: ${{ always() && steps.allocate.outcome == 'success' }}
+        timeout-minutes: 3
+        run: '"$RUNNER_TEMP/query-comparison" query-before "$RUNNER_TEMP/query-comparison-data"'
+      - name: Direct native query before boot
+        id: native_before
+        if: ${{ always() && steps.allocate.outcome == 'success' }}
+        # This bounds the entire control step, including Python/exec startup. It does not
+        # reproduce the Swift request's deadline or termination implementation.
+        timeout-minutes: 1
+        run: |
+          set +e
+          python3 scripts/native-simulator-query.py launch "$RUNNER_TEMP/query-comparison-data" before
+          idt_status=$?
+          set -e
+          python3 scripts/native-simulator-query.py finish "$RUNNER_TEMP/query-comparison-data" before "$idt_status"
+          exit "$idt_status"
+      - name: Fresh exact-owner mutation gate and boot
+        id: boot
+        if: ${{ always() && steps.allocate.outcome == 'success' }}
+        run: '"$RUNNER_TEMP/query-comparison" boot-comparison "$RUNNER_TEMP/query-comparison-data"'
+      - name: Swift query after boot
+        id: swift_after
+        if: ${{ always() && steps.boot.outcome == 'success' }}
+        timeout-minutes: 3
+        run: '"$RUNNER_TEMP/query-comparison" query-after "$RUNNER_TEMP/query-comparison-data"'
+      - name: Direct native query after boot
+        id: native_after
+        if: ${{ always() && steps.boot.outcome == 'success' }}
+        timeout-minutes: 1
+        run: |
+          set +e
+          python3 scripts/native-simulator-query.py launch "$RUNNER_TEMP/query-comparison-data" after
+          idt_status=$?
+          set -e
+          python3 scripts/native-simulator-query.py finish "$RUNNER_TEMP/query-comparison-data" after "$idt_status"
+          exit "$idt_status"
+      - name: Report bounded controls and remove private raw output
+        if: ${{ always() && steps.host.outcome == 'success' }}
+        env:
+          IDT_COMPARE_ALLOCATE: ${{ steps.allocate.outcome }}
+          IDT_COMPARE_BOOT: ${{ steps.boot.outcome }}
+          IDT_COMPARE_SWIFT_BEFORE: ${{ steps.swift_before.outcome }}
+          IDT_COMPARE_NATIVE_BEFORE: ${{ steps.native_before.outcome }}
+          IDT_COMPARE_SWIFT_AFTER: ${{ steps.swift_after.outcome }}
+          IDT_COMPARE_NATIVE_AFTER: ${{ steps.native_after.outcome }}
+        run: |
+          if test -d "$RUNNER_TEMP/query-comparison-data"; then
+            "$RUNNER_TEMP/query-comparison" report-comparison "$RUNNER_TEMP/query-comparison-data"
+          else
+            echo '[query comparison] Allocation created no registry; all controls are ineligible. No raw output exists.'
+          fi
+      - name: Independently remove only the exact owned comparison simulator
+        if: ${{ always() && steps.host.outcome == 'success' }}
+        run: |
+          if test -d "$RUNNER_TEMP/query-comparison-data"; then
+            "$RUNNER_TEMP/query-comparison" cleanup "$RUNNER_TEMP/query-comparison-data"
+          else
+            echo '[query comparison] No allocation registry or cleanup target was created.'
+          fi
 
   release-build:
     name: Release packaging

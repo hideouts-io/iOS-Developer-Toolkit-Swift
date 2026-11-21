@@ -277,6 +277,13 @@ package final class InboundBuffer: ChannelInboundHandler, @unchecked Sendable {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 lock.lock()
+                // Cancellation can run before this operation registers its waiter. Holding the
+                // same lock as onCancel prevents an already-cancelled read from waiting forever.
+                if Task.isCancelled {
+                    lock.unlock()
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
                 if waiter != nil {
                     lock.unlock()
                     continuation.resume(throwing: ToolkitError(.internalInconsistency, message: "Two readers used one device connection."))

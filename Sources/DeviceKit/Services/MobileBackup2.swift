@@ -64,28 +64,81 @@ public enum MobileBackup2 {
         let isIncremental = !options.forceFullBackup && FileManager.default.fileExists(atPath: backupDirectory.appendingPathComponent("Status.plist").path)
         events(.status(isIncremental ? "Starting an incremental backup…" : "Starting a full backup…"))
 
-        let lock = try await SyncLock.acquire(session)
+        let lock = try await SyncLock.acquire(session, events: events)
         do {
             let link = try await DeviceLink.open(session)
-            defer { Task { await link.close() } }
-            var backupOptions: [String: PlistValue] = [:]
-            if !isIncremental { backupOptions["ForceFullBackup"] = true }
-            try await link.processMessage([
-                "MessageName": "Backup",
-                "TargetIdentifier": .string(target.udid),
-                "SourceIdentifier": .string(target.udid),
-                "Options": .dictionary(backupOptions),
-            ])
-            try await link.runMessageLoop(root: options.destinationRoot, events: events)
-            await lock.release()
-        } catch {
-            await lock.release()
-            throw error
+            do {
+                var backupOptions: [String: PlistValue] = [:]
+                if !isIncremental { backupOptions["ForceFullBackup"] = true }
+                try await link.processMessage([
+                    "MessageName": "Backup",
+                    "TargetIdentifier": .string(target.udid),
+                    "SourceIdentifier": .string(target.udid),
+                    "Options": .dictionary(backupOptions),
+                ])
+                try await link.runMessageLoop(root: options.destinationRoot, events: events)
+                try Task.checkCancellation()
+                try validateFinishedSnapshot(in: backupDirectory)
+            } catch {
+                await link.close()
+                throw error
+            }
+            await link.close()
+        } catch let backupFailure {
+            do { try await lock.release() }
+            catch { throw syncCleanupFailure(after: backupFailure, cleanup: error, operation: "Releasing backup sync ownership") }
+            throw backupFailure
         }
+        try await lock.release()
+        try Task.checkCancellation()
         events(.progress(100))
         events(.finished(backupDirectory))
         logger.info("Backup completed")
         return backupDirectory
+    }
+
+    /// A successful DeviceLink reply alone does not establish a completed backup snapshot.
+    /// libimobiledevice's backup client also requires `Status.plist/SnapshotState = finished`.
+    static func validateFinishedSnapshot(in backupDirectory: URL) throws {
+        let statusURL = try SecureFileIO.safeChild(of: backupDirectory, relativePath: "Status.plist")
+        let status: PlistValue
+        do {
+            let descriptor = open(statusURL.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+            guard descriptor >= 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            let input = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            let maximumStatusBytes = 1 << 20
+            let data: Data
+            do {
+                var metadata = stat()
+                guard fstat(descriptor, &metadata) == 0 else {
+                    throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                }
+                guard metadata.st_mode & S_IFMT == S_IFREG, metadata.st_size >= 0, metadata.st_size <= maximumStatusBytes else {
+                    throw ToolkitError(.protocolViolation, message: "The backup snapshot status is not a regular file within the supported size.")
+                }
+                data = try input.read(upToCount: maximumStatusBytes + 1) ?? Data()
+                guard data.count <= maximumStatusBytes else {
+                    throw ToolkitError(.protocolViolation, message: "The backup snapshot status exceeds the supported size.")
+                }
+            } catch {
+                let readError = error
+                do { try input.close() }
+                catch {
+                    throw ToolkitError.fileSystem("Could not read and close the backup snapshot status.", path: statusURL.path, underlying: readError)
+                        .appendingDetail("Closing the status reader also failed: \(String(String(describing: error).prefix(2048)))")
+                }
+                throw readError
+            }
+            try input.close()
+            status = try PlistValue.decode(data)
+        } catch {
+            throw ToolkitError.fileSystem("The backup service ended without a validated snapshot status. The backup is incomplete.", path: statusURL.path, underlying: error)
+        }
+        guard status["SnapshotState"]?.stringValue == "finished" else {
+            throw ToolkitError(.protocolViolation, message: "The backup service did not report a finished snapshot. The backup is incomplete.", recovery: "Keep the partial backup folder for inspection; do not rely on it as a completed backup.")
+        }
     }
 
     /// Turns on backup encryption with a new password. The password travels only inside the
@@ -144,48 +197,107 @@ public enum MobileBackup2 {
 
     // MARK: Sync lock
 
+    private static func syncCleanupFailure(after failure: Error, cleanup: Error, operation: String) -> ToolkitError {
+        ToolkitError(
+            .serviceUnavailable,
+            message: "The backup did not complete and required sync cleanup also failed.",
+            recovery: "Keep the partial backup folder for inspection. Reconnect the device before starting another sync or backup.",
+            technicalDetail: "Original failure: \(String(String(describing: failure).prefix(2048)))\n\(operation): \(String(String(describing: cleanup).prefix(8192)))"
+        )
+    }
+
     /// Prevents a concurrent sync while the backup runs, as Finder does.
     struct SyncLock: Sendable {
-        let notifications: NotificationProxy?
-        let afc: AFCClient?
+        let notifications: NotificationProxy
+        let afc: AFCClient
         let handle: UInt64?
 
-        static func acquire(_ session: DeviceSession) async throws -> SyncLock {
-            let notifications = try? await NotificationProxy.open(session)
-            try? await notifications?.post("com.apple.itunes-mobdev.syncWillStart")
-            guard let afc = try? await AFCClient.openMedia(session),
-                  let handle = try? await afc.open("/com.apple.itunes.lock_sync", mode: .readWrite)
-            else {
-                return SyncLock(notifications: notifications, afc: nil, handle: nil)
-            }
-            try? await notifications?.post("com.apple.itunes-mobdev.syncLockRequest")
-            var locked = false
-            for _ in 0..<50 {
-                if (try? await afc.lock(handle: handle, operation: .exclusive)) != nil {
-                    locked = true
-                    break
+        static func acquire(_ session: DeviceSession, events: @escaping @Sendable (BackupEvent) -> Void) async throws -> SyncLock {
+            let notifications = try await NotificationProxy.open(session)
+            let afc: AFCClient
+            do {
+                try await notifications.post("com.apple.itunes-mobdev.syncWillStart")
+                afc = try await AFCClient.openMedia(session)
+            } catch let setupFailure {
+                do {
+                    try await Task.detached {
+                        do { try await notifications.post("com.apple.itunes-mobdev.syncDidFinish") }
+                        catch {
+                            await notifications.close()
+                            throw error
+                        }
+                        await notifications.close()
+                    }.value
                 }
-                try await Task.sleep(nanoseconds: 200_000_000)
+                catch {
+                    throw syncCleanupFailure(after: setupFailure, cleanup: error, operation: "Posting sync completion after setup failed")
+                }
+                throw setupFailure
             }
-            guard locked else {
-                try? await afc.close(handle: handle)
-                await afc.close()
-                try? await notifications?.post("com.apple.itunes-mobdev.syncDidFinish")
-                await notifications?.close()
-                throw ToolkitError(.serviceUnavailable, message: "Another sync or backup is using the device.", recovery: "Wait for Finder or another tool to finish, then try again.")
+
+            var handle: UInt64?
+            do {
+                do {
+                    handle = try await afc.open("/com.apple.itunes.lock_sync", mode: .readWrite)
+                } catch let error as ToolkitError where error == AFCClient.error(code: 8) {
+                    // The reference client permits a device without a lock-file handle.
+                    // Service, permission and malformed-response failures remain errors.
+                    events(.status("The device has no sync lock file; concurrent sync exclusion is unavailable."))
+                    logger.warning("Backup sync lock file unavailable")
+                    return SyncLock(notifications: notifications, afc: afc, handle: nil)
+                }
+                guard let handle, handle != 0 else {
+                    throw ToolkitError(.protocolViolation, message: "The device returned an invalid backup sync lock handle.")
+                }
+                try await notifications.post("com.apple.itunes-mobdev.syncLockRequest")
+                for attempt in 0..<50 {
+                    try Task.checkCancellation()
+                    do {
+                        try await afc.lock(handle: handle, operation: .exclusive)
+                        try await notifications.post("com.apple.itunes-mobdev.syncDidStart")
+                        return SyncLock(notifications: notifications, afc: afc, handle: handle)
+                    } catch let error as ToolkitError where error == AFCClient.error(code: 19) {
+                        guard attempt < 49 else {
+                            throw ToolkitError(.serviceUnavailable, message: "Another sync or backup is using the device.", recovery: "Wait for Finder or another tool to finish, then try again.", technicalDetail: error.technicalDetail)
+                        }
+                        logger.warning("Backup sync lock is busy; retrying")
+                        try await Task.sleep(nanoseconds: 200_000_000)
+                    }
+                }
+                throw ToolkitError(.internalInconsistency, message: "Backup sync lock acquisition ended without a result.")
+            } catch let acquisitionFailure {
+                do { try await SyncLock(notifications: notifications, afc: afc, handle: handle).release() }
+                catch { throw syncCleanupFailure(after: acquisitionFailure, cleanup: error, operation: "Releasing sync ownership after lock acquisition failed") }
+                throw acquisitionFailure
             }
-            try? await notifications?.post("com.apple.itunes-mobdev.syncDidStart")
-            return SyncLock(notifications: notifications, afc: afc, handle: handle)
         }
 
-        func release() async {
-            if let afc, let handle {
-                try? await afc.lock(handle: handle, operation: .unlock)
-                try? await afc.close(handle: handle)
-                await afc.close()
+        func release() async throws {
+            // Cleanup owns the device sync state until every response has been validated.
+            // Its I/O must remain usable after the backup task has been cancelled.
+            try await Task.detached { try await releaseOwnership() }.value
+        }
+
+        private func releaseOwnership() async throws {
+            var failures: [ToolkitError] = []
+            if let handle {
+                do { try await afc.lock(handle: handle, operation: .unlock) }
+                catch { failures.append(ToolkitError.wrap(error, message: "Could not unlock the backup sync lock.").appendingDetail("Operation: unlocking backup sync ownership")) }
+                do { try await afc.close(handle: handle) }
+                catch { failures.append(ToolkitError.wrap(error, message: "Could not close the backup sync lock handle.").appendingDetail("Operation: closing the backup sync lock handle")) }
             }
-            try? await notifications?.post("com.apple.itunes-mobdev.syncDidFinish")
-            await notifications?.close()
+            await afc.close()
+            do { try await notifications.post("com.apple.itunes-mobdev.syncDidFinish") }
+            catch { failures.append(ToolkitError.wrap(error, message: "Could not post the backup sync completion notification.").appendingDetail("Operation: posting backup sync completion")) }
+            await notifications.close()
+            if let first = failures.first {
+                throw ToolkitError(
+                    first.kind == .cancelled ? .serviceUnavailable : first.kind,
+                    message: "Required backup sync cleanup did not finish. The backup cannot be reported complete.",
+                    recovery: "Keep the backup folder for inspection. Reconnect the device before starting another sync or backup.",
+                    technicalDetail: failures.map { String(String(describing: $0).prefix(2048)) }.joined(separator: "\n")
+                )
+            }
         }
     }
 }
@@ -238,16 +350,18 @@ actor DeviceLink {
         try await messages.send(["DLMessageStatusResponse", .integer(Int64(code)), .string(description ?? MobileBackup2.emptyParameter), payload], format: .binary)
     }
 
-    /// Handles device requests until the final `DLMessageProcessMessage` or disconnect.
+    /// Returns only for a well-typed successful terminal `DLMessageProcessMessage`.
     func runMessageLoop(root: URL, events: @escaping @Sendable (BackupEvent) -> Void) async throws {
         var receivedBytes: Int64 = 0
         while true {
             try Task.checkCancellation()
             let message = try await messages.receive(timeout: 600)
+            try Task.checkCancellation()
             guard let name = message[0]?.stringValue else {
                 throw ToolkitError(.protocolViolation, message: "The backup service sent an unreadable request.")
             }
-            if let progress = Self.progress(in: message) { events(.progress(progress)) }
+            // Transfer progress is provisional; 100% belongs to validated completion.
+            if let progress = Self.progress(in: message), progress < 100 { events(.progress(progress)) }
             switch name {
             case "DLMessageDownloadFiles":
                 try await sendFiles(message[1]?.arrayValue?.compactMap(\.stringValue) ?? [], root: root)
@@ -293,10 +407,13 @@ actor DeviceLink {
                     try FileManager.default.copyItem(at: from, to: to)
                 }
             case "DLMessageDisconnect":
-                return
+                throw ToolkitError(.deviceDisconnected, message: "The backup service disconnected before reporting successful completion.", recovery: "Keep the partial backup folder for inspection; reconnect the device before trying again.")
             case "DLMessageProcessMessage":
-                let result = message[1] ?? .dictionary([:])
-                let code = result["ErrorCode"]?.intValue ?? 0
+                guard let result = message[1]?.dictionaryValue,
+                      let codeValue = result["ErrorCode"],
+                      let code = codeValue.int64Value.flatMap(Int.init(exactly:)) else {
+                    throw ToolkitError(.protocolViolation, message: "The backup service sent an invalid completion status. The operation is incomplete.", recovery: "Keep any partial output for inspection; the completion status must contain an integer ErrorCode.")
+                }
                 if code == 0 { return }
                 throw MobileBackup2Errors.interpret(code: code, description: result["ErrorDescription"]?.stringValue)
             default:

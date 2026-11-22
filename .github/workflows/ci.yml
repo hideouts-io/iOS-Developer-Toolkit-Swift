@@ -87,6 +87,62 @@ jobs:
             -configuration Debug -destination 'platform=macOS' \
             -derivedDataPath "$RUNNER_TEMP/dd" -resultBundlePath "$RUNNER_TEMP/UITests.xcresult" \
             test-without-building
+      - name: Build the inventory fixture host
+        run: |
+          xcrun swiftc -swift-version 6 -warnings-as-errors -parse-as-library \
+            -I "$RUNNER_TEMP/dd/Build/Products/Debug" \
+            "$RUNNER_TEMP/dd/Build/Products/Debug/ToolkitCore.o" \
+            scripts/SimulatorInventoryFixtures.swift -o "$RUNNER_TEMP/inventory-fixtures"
+      - name: Prepare two owned inventory simulators
+        id: prepare_inventory
+        run: |
+          "$RUNNER_TEMP/inventory-fixtures" prepare "$RUNNER_TEMP/inventory-fixtures-data"
+          python3 - "$RUNNER_TEMP/inventory-fixtures-data/manifest.json" <<'PY'
+          import json
+          import os
+          import sys
+          import uuid
+          from pathlib import Path
+
+          manifest = json.loads(Path(sys.argv[1]).read_text())
+          if not isinstance(manifest, dict):
+              raise SystemExit("Inventory fixture host did not produce an object manifest.")
+          for key in ("first", "second", "owner"):
+              value = manifest.get(key)
+              if not isinstance(value, str) or str(uuid.UUID(value)).upper() != value:
+                  raise SystemExit(f"Inventory fixture manifest has no canonical {key} UUID.")
+          if manifest["first"] == manifest["second"]:
+              raise SystemExit("Inventory fixtures must use distinct simulators.")
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              output.write("TEST_RUNNER_IDT_INVENTORY_MANIFEST=" + json.dumps({key: manifest[key] for key in ("first", "second", "owner")}, separators=(",", ":")) + "\n")
+          PY
+      - name: Two-owned-simulator inventory UI acceptance
+        env:
+          TEST_RUNNER_IDT_INVENTORY_UI_TESTS: "1"
+        run: |
+          xcodebuild -project iOSDeveloperToolkit.xcodeproj -scheme iOSDeveloperToolkit \
+            -configuration Debug -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/dd" -resultBundlePath "$RUNNER_TEMP/InventoryUITests.xcresult" \
+            -only-testing:iOSDeveloperToolkitUITests/SimulatorInventoryUITests test-without-building
+          xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/InventoryUITests.xcresult" \
+            > "$RUNNER_TEMP/InventoryUITests-summary.json"
+          python3 - "$RUNNER_TEMP/InventoryUITests-summary.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          summary = json.loads(Path(sys.argv[1]).read_text())
+          expected = {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0}
+          if not isinstance(summary, dict) or any(type(summary.get(key)) is not int for key in expected):
+              raise SystemExit("Inventory acceptance did not produce valid execution counts.")
+          observed = {key: summary[key] for key in expected}
+          if observed != expected:
+              raise SystemExit(f"Inventory acceptance must execute and pass exactly one test: {observed}")
+          print(f"Two-owned-simulator native acceptance executed: {observed}")
+          PY
+      - name: Verify cleanup of both owned inventory simulators
+        if: ${{ always() && (steps.prepare_inventory.outcome == 'success' || steps.prepare_inventory.outcome == 'failure' || steps.prepare_inventory.outcome == 'cancelled') }}
+        run: '"$RUNNER_TEMP/inventory-fixtures" cleanup "$RUNNER_TEMP/inventory-fixtures-data"'
       - name: Render every page at the default and minimum window sizes
         run: |
           scripts/check-layout.sh \
@@ -98,6 +154,8 @@ jobs:
           name: ui-test-results
           path: |
             ${{ runner.temp }}/UITests.xcresult
+            ${{ runner.temp }}/InventoryUITests.xcresult
+            ${{ runner.temp }}/InventoryUITests-summary.json
             ${{ runner.temp }}/layout
           if-no-files-found: ignore
 

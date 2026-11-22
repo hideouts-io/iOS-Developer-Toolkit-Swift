@@ -240,7 +240,9 @@ struct DeviceDetailView: View {
     private func simulatorControls(_ device: Device) -> some View {
         Card(title: "Simulator", systemImage: "macwindow") {
             HStack {
-                Button("Start") { runAction("sim-boot", device) }.disabled(device.simulatorState == .booted)
+                Button("Start") { runAction("sim-boot", device) }
+                    .disabled(device.simulatorState == .booted)
+                    .accessibilityIdentifier("simulator-start")
                 Button("Show in Simulator") { runAction("sim-open", device) }
                 Button("Shut Down") {
                     confirmation = PendingConfirmation(title: "Shut down \(device.name)", detail: "Running apps in the simulator stop.", requirement: .make(for: .deviceChange, target: device.target), target: device.target) {

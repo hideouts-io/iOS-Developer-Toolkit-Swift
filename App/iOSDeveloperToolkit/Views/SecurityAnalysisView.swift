@@ -135,10 +135,21 @@ struct SecurityAnalysisView: View {
                         if !report.acquisitionWarnings.isEmpty {
                             Label("\(report.acquisitionWarnings.count) acquisition warnings require review", systemImage: "exclamationmark.triangle")
                                 .foregroundStyle(.orange)
+                            DisclosureGroup("Incomplete acquisition coverage") {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ForEach(report.acquisitionWarnings.indices, id: \.self) { index in
+                                        Text(report.acquisitionWarnings[index])
+                                            .font(.callout)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                                .padding(.top, 8)
+                            }
+                            .accessibilityIdentifier("security-acquisition-warnings")
                         }
                     }
                     if report.correlatedFindings.isEmpty {
-                        ContentUnavailableView("No known indicators detected", systemImage: "magnifyingglass", description: Text("This applies only to the evidence and intelligence coverage shown above. It is not a clean-device verdict."))
+                        ContentUnavailableView(report.acquisitionWarnings.isEmpty ? "No known indicators detected" : "Coverage incomplete", systemImage: "magnifyingglass", description: Text("This applies only to the evidence and intelligence coverage shown above. It is not a clean-device verdict."))
                             .frame(minHeight: 220)
                     } else {
                         HSplitView {

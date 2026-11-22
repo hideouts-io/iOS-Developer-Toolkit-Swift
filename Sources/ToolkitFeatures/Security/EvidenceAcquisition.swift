@@ -27,6 +27,13 @@ private struct SecurityEvidenceFile: Sendable {
     let artifactType: String
 }
 
+private struct SecurityTextValue {
+    let field: String
+    let value: String
+    let wasTruncated: Bool
+    let wasOmittedBinary: Bool
+}
+
 private final class ReadOnlySQLite {
     private var database: OpaquePointer?
 
@@ -47,7 +54,7 @@ private final class ReadOnlySQLite {
         if let database { sqlite3_close(database) }
     }
 
-    func rows(_ sql: String, bindings: [Int64]) throws -> [[String?]] {
+    func rows(_ sql: String, bindings: [Int64]) throws -> (rows: [[String?]], omittedBLOBCells: Int) {
         guard let database else { throw ToolkitError(.internalInconsistency, message: "The SQLite evidence connection is closed.") }
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
@@ -60,9 +67,11 @@ private final class ReadOnlySQLite {
             }
         }
         var result: [[String?]] = []
+        var omittedBLOBCells = 0
         while true {
+            try Task.checkCancellation()
             let status = sqlite3_step(statement)
-            if status == SQLITE_DONE { return result }
+            if status == SQLITE_DONE { return (result, omittedBLOBCells) }
             guard status == SQLITE_ROW else { throw sqliteError(database, context: "read", sql: sql) }
             let count = sqlite3_column_count(statement)
             var row: [String?] = []
@@ -73,8 +82,21 @@ private final class ReadOnlySQLite {
                 case SQLITE_INTEGER: row.append(String(sqlite3_column_int64(statement, index)))
                 case SQLITE_FLOAT: row.append(String(sqlite3_column_double(statement, index)))
                 case SQLITE_TEXT:
-                    row.append(sqlite3_column_text(statement, index).map { String(cString: $0) })
-                default: row.append(nil)
+                    let pointer = sqlite3_column_text(statement, index)
+                    let byteCount = Int(sqlite3_column_bytes(statement, index))
+                    if byteCount == 0 {
+                        row.append("")
+                    } else {
+                        guard let pointer, let text = String(bytes: UnsafeBufferPointer(start: pointer, count: byteCount), encoding: .utf8) else {
+                            throw ToolkitError(.invalidInput, message: "SQLite contains a text cell that is not valid UTF-8.")
+                        }
+                        row.append(text)
+                    }
+                case SQLITE_BLOB:
+                    omittedBLOBCells += 1
+                    row.append(nil)
+                default:
+                    throw ToolkitError(.invalidInput, message: "SQLite returned an unsupported column type.")
                 }
             }
             result.append(row)
@@ -128,6 +150,20 @@ public enum SecurityEvidenceAcquisition {
             throw ToolkitError.invalidInput("The selected evidence path is not a regular file or folder.")
         }
 
+        var walBases: Set<String> = []
+        for file in files where file.logicalPath.hasSuffix("-wal") {
+            if try hasNonEmptyWAL(at: file.url) {
+                walBases.insert(String(file.logicalPath.dropLast(4)))
+            }
+        }
+        if rootValues.isRegularFile == true, let file = files.first,
+           try hasNonEmptyWAL(at: URL(fileURLWithPath: file.url.path + "-wal")) {
+            walBases.insert(file.logicalPath)
+        }
+        for file in files where walBases.contains(file.logicalPath) {
+            appendWarning("SQLite WAL companion for \(file.logicalPath) was not applied; uncheckpointed rows may be missing and content coverage is incomplete.", to: &warnings)
+        }
+
         let algorithms = Array(Set(hashTypes.compactMap(hashAlgorithm))).sorted()
         var observations: [EvidenceObservation] = []
         var bytesExamined: Int64 = 0
@@ -142,13 +178,14 @@ public enum SecurityEvidenceAcquisition {
                 appendWarning("Skipped content for \(file.logicalPath): \(size) bytes exceeds the per-file limit.", to: &warnings)
                 continue
             }
-            guard bytesExamined + size <= request.maximumTotalBytes else {
+            guard size <= request.maximumTotalBytes - bytesExamined else {
                 appendWarning("Content acquisition stopped at the \(request.maximumTotalBytes)-byte total safety limit.", to: &warnings)
                 break
             }
             do {
                 let fileObservations = try contentObservations(file, method: request.acquisitionMethod, maximumSQLiteRows: request.maximumSQLiteRows, algorithms: algorithms)
-                observations.append(contentsOf: fileObservations)
+                observations.append(contentsOf: fileObservations.observations)
+                for warning in fileObservations.warnings { appendWarning(warning, to: &warnings) }
                 bytesExamined += size
                 filesExamined += 1
             } catch is CancellationError {
@@ -188,6 +225,7 @@ public enum SecurityEvidenceAcquisition {
     }
 
     private static func backupFiles(root: URL, maximumFiles: Int) throws -> (files: [SecurityEvidenceFile], warnings: [String]) {
+        let rootPath = root.resolvingSymlinksInPath().path
         let manifest = root.appendingPathComponent("Manifest.db")
         let info = root.appendingPathComponent("Info.plist")
         guard FileManager.default.fileExists(atPath: manifest.path), FileManager.default.fileExists(atPath: info.path) else {
@@ -199,21 +237,48 @@ public enum SecurityEvidenceAcquisition {
                 throw ToolkitError.invalidInput("Backup analysis requires \(requiredFile.lastPathComponent) to be a regular file, not a symbolic link.")
             }
         }
-        var files = [
+        if try hasNonEmptyWAL(at: root.appendingPathComponent("Manifest.db-wal")) {
+            throw ToolkitError(
+                .invalidInput,
+                message: "Backup inventory cannot be verified while a nonempty Manifest.db-wal is present.",
+                recovery: "Provide a consistent backup snapshot with a checkpointed Manifest.db, then scan it again."
+            )
+        }
+        var files = Array([
             SecurityEvidenceFile(url: info, logicalPath: "Info.plist", artifactType: "backup-metadata"),
             SecurityEvidenceFile(url: manifest, logicalPath: "Manifest.db", artifactType: "backup-manifest"),
-        ]
+        ].prefix(maximumFiles))
         var warnings: [String] = []
+        guard files.count < maximumFiles else {
+            appendWarning("Backup inventory stopped at the \(maximumFiles)-file safety limit.", to: &warnings)
+            return (files, warnings)
+        }
         let database = try ReadOnlySQLite(url: manifest)
-        for row in try database.rows("SELECT fileID, domain, relativePath FROM Files WHERE flags = 1 LIMIT ?", bindings: [Int64(maximumFiles)]) {
+        var missingPayloadCount = 0
+        var firstMissingPath: String?
+        let inventoryQueryLimit = maximumFiles == Int.max ? Int64.max : Int64(maximumFiles + 1)
+        let manifestRows = try database.rows("SELECT fileID, domain, relativePath FROM Files WHERE flags = 1 LIMIT ?", bindings: [inventoryQueryLimit]).rows
+        for (index, row) in manifestRows.enumerated() {
             try Task.checkCancellation()
+            if index == maximumFiles {
+                appendWarning("Backup inventory stopped at the \(maximumFiles)-file safety limit; additional Manifest.db rows were not examined.", to: &warnings)
+                break
+            }
             guard row.count == 3, let fileID = row[0], let domain = row[1], let relativePath = row[2], validBackupFileID(fileID) else {
                 appendWarning("Skipped a Manifest.db row with an unsafe or malformed fileID.", to: &warnings)
                 continue
             }
+            guard validBackupLogicalPath(domain: domain, relativePath: relativePath) else {
+                appendWarning("Skipped backup file \(fileID): its logical domain or relative path is unsafe or malformed.", to: &warnings)
+                continue
+            }
             let candidate = root.appendingPathComponent(String(fileID.prefix(2))).appendingPathComponent(fileID).standardizedFileURL
             guard candidate.path.hasPrefix(root.path + "/") else { appendWarning("Skipped backup file \(fileID): path escapes the backup root.", to: &warnings); continue }
-            guard FileManager.default.fileExists(atPath: candidate.path) else { continue }
+            guard FileManager.default.fileExists(atPath: candidate.path) else {
+                missingPayloadCount += 1
+                if firstMissingPath == nil { firstMissingPath = "\(domain)/\(relativePath)" }
+                continue
+            }
             let values: URLResourceValues
             do {
                 values = try candidate.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
@@ -223,32 +288,62 @@ public enum SecurityEvidenceAcquisition {
             }
             guard values.isRegularFile == true else { appendWarning("Skipped backup file \(fileID): it is not a regular file.", to: &warnings); continue }
             guard values.isSymbolicLink != true else { appendWarning("Skipped backup file \(fileID): symbolic links are not accepted as evidence.", to: &warnings); continue }
-            files.append(SecurityEvidenceFile(url: candidate, logicalPath: "\(domain)/\(relativePath.drop(while: { $0 == "/" }))", artifactType: "backup-artifact"))
+            let bucketValues = try candidate.deletingLastPathComponent().resourceValues(forKeys: [.isSymbolicLinkKey])
+            let resolved = candidate.resolvingSymlinksInPath()
+            guard bucketValues.isSymbolicLink != true, resolved.path.hasPrefix(rootPath + "/") else {
+                appendWarning("Skipped backup file \(fileID): its path traverses a symbolic link or escapes the backup root.", to: &warnings)
+                continue
+            }
+            files.append(SecurityEvidenceFile(url: resolved, logicalPath: "\(domain)/\(relativePath)", artifactType: "backup-artifact"))
             if files.count >= maximumFiles {
-                appendWarning("Backup inventory stopped at the \(maximumFiles)-file safety limit.", to: &warnings)
+                if index + 1 < manifestRows.count {
+                    appendWarning("Backup inventory stopped at the \(maximumFiles)-file safety limit; additional Manifest.db rows were not examined.", to: &warnings)
+                }
                 break
             }
+        }
+        if missingPayloadCount > 0 {
+            warnings.insert("Missing \(missingPayloadCount) backup payload\(missingPayloadCount == 1 ? "" : "s") referenced by Manifest.db (first: \(firstMissingPath ?? "unknown")); content coverage is incomplete.", at: 0)
         }
         return (files, warnings)
     }
 
-    private static func contentObservations(_ file: SecurityEvidenceFile, method: SecurityAcquisitionMethod, maximumSQLiteRows: Int, algorithms: [String]) throws -> [EvidenceObservation] {
+    /// Raw hashes describe the file independently of parser success. Backup filenames are storage
+    /// identifiers, so format dispatch uses the validated logical path or a verified binary header.
+    private static func contentObservations(_ file: SecurityEvidenceFile, method: SecurityAcquisitionMethod, maximumSQLiteRows: Int, algorithms: [String]) throws -> (observations: [EvidenceObservation], warnings: [String]) {
         try Task.checkCancellation()
-        let ext = file.url.pathExtension.lowercased()
-        if sqliteExtensions.contains(ext) { return try sqliteObservations(file, method: method, maximumRows: maximumSQLiteRows) }
-        guard textExtensions.contains(ext) || file.url.lastPathComponent == "Info.plist" || !algorithms.isEmpty else { return [] }
+        let ext = URL(fileURLWithPath: file.logicalPath).pathExtension.lowercased()
         let content = try Data(contentsOf: file.url, options: [.mappedIfSafe])
-        var observations: [EvidenceObservation] = []
-        if textExtensions.contains(ext) || file.url.lastPathComponent == "Info.plist" {
-            observations.append(contentsOf: try textObservations(file, content: content, method: method))
+        try Task.checkCancellation()
+        var observations = hashObservations(file, content: content, method: method, algorithms: algorithms)
+        var warnings: [String] = []
+        try Task.checkCancellation()
+        do {
+            if sqliteExtensions.contains(ext) || content.starts(with: Data("SQLite format 3\0".utf8)) {
+                let parsed = try sqliteObservations(file, method: method, maximumRows: maximumSQLiteRows)
+                observations.append(contentsOf: parsed.observations)
+                warnings.append(contentsOf: parsed.warnings)
+            } else if textExtensions.contains(ext) || content.starts(with: Data("bplist00".utf8)) {
+                let parsed = try textObservations(file, content: content, method: method)
+                observations.append(contentsOf: parsed.observations)
+                warnings.append(contentsOf: parsed.warnings)
+            } else {
+                try Task.checkCancellation()
+                return (observations, ["Content parsing is unsupported for \(file.logicalPath); only path metadata and requested raw hashes were acquired."])
+            }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            try Task.checkCancellation()
+            return (observations, ["Could not parse \(file.logicalPath): \((error as? ToolkitError)?.message ?? error.localizedDescription). Path metadata and requested raw hashes remain available; content coverage is incomplete."])
         }
-        observations.append(contentsOf: hashObservations(file, content: content, method: method, algorithms: algorithms))
-        return observations
+        try Task.checkCancellation()
+        return (observations, warnings)
     }
 
-    private static func textObservations(_ file: SecurityEvidenceFile, content: Data, method: SecurityAcquisitionMethod) throws -> [EvidenceObservation] {
-        let ext = file.url.pathExtension.lowercased()
-        let values: [(String, String)]
+    private static func textObservations(_ file: SecurityEvidenceFile, content: Data, method: SecurityAcquisitionMethod) throws -> (observations: [EvidenceObservation], warnings: [String]) {
+        let ext = URL(fileURLWithPath: file.logicalPath).pathExtension.lowercased()
+        let values: [SecurityTextValue]
         if ext == "plist" || ext == "mobileconfig" || content.starts(with: Data("bplist00".utf8)) {
             let object = try PropertyListSerialization.propertyList(from: content, options: [], format: nil)
             values = flatten(object, prefix: "plist")
@@ -256,41 +351,73 @@ public enum SecurityEvidenceAcquisition {
             let object = try JSONSerialization.jsonObject(with: content)
             values = flatten(object, prefix: "json")
         } else {
-            values = String(decoding: content, as: UTF8.self).split(whereSeparator: \Character.isNewline).enumerated().map { ("line:\($0.offset + 1)", String($0.element.prefix(32_768))) }
+            guard let text = String(data: content, encoding: .utf8), !text.contains("\0") else {
+                throw ToolkitError.invalidInput("The text evidence is not valid UTF-8 or contains binary NUL bytes.")
+            }
+            values = text.split(whereSeparator: \Character.isNewline).enumerated().map {
+                SecurityTextValue(field: "line:\($0.offset + 1)", value: String($0.element.prefix(32_768)), wasTruncated: $0.element.count > 32_768, wasOmittedBinary: false)
+            }
         }
-        return values.map { field, value in
-            EvidenceObservation(artifactType: file.artifactType, artifactPath: file.logicalPath, sourceFile: file.url.path, observedType: "text", observedValue: value, database: nil, table: nil, recordID: field, timestamp: nil, acquisitionMethod: method)
+        let truncatedCount = values.filter(\.wasTruncated).count
+        let omittedBinaryCount = values.filter(\.wasOmittedBinary).count
+        var warnings: [String] = []
+        if truncatedCount > 0 { warnings.append("Truncated \(truncatedCount) text value\(truncatedCount == 1 ? "" : "s") in \(file.logicalPath) at the 32,768-character safety limit; content coverage is incomplete.") }
+        if omittedBinaryCount > 0 { warnings.append("Omitted \(omittedBinaryCount) binary plist value\(omittedBinaryCount == 1 ? "" : "s") in \(file.logicalPath) above the 4,096-byte safety limit; content coverage is incomplete.") }
+        let observations = values.filter { !$0.wasOmittedBinary }.map { entry in
+            EvidenceObservation(artifactType: file.artifactType, artifactPath: file.logicalPath, sourceFile: file.url.path, observedType: "text", observedValue: entry.value, database: nil, table: nil, recordID: entry.field, timestamp: nil, acquisitionMethod: method)
         }
+        return (observations, warnings)
     }
 
-    private static func sqliteObservations(_ file: SecurityEvidenceFile, method: SecurityAcquisitionMethod, maximumRows: Int) throws -> [EvidenceObservation] {
+    private static func sqliteObservations(_ file: SecurityEvidenceFile, method: SecurityAcquisitionMethod, maximumRows: Int) throws -> (observations: [EvidenceObservation], warnings: [String]) {
         let database = try ReadOnlySQLite(url: file.url)
-        let tables = try database.rows("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name LIMIT 100", bindings: []).compactMap { $0.first ?? nil }
+        let tables = try database.rows("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name LIMIT 101", bindings: []).rows.compactMap { $0.first ?? nil }
         var observations: [EvidenceObservation] = []
+        var warnings: [String] = []
         var remaining = maximumRows
-        for table in tables where remaining > 0 {
+        var truncatedValueCount = 0
+        var omittedBLOBCells = 0
+        var perTableLimitReached = false
+        var totalRowBudgetReached = false
+        if tables.count > 100 { warnings.append("SQLite table limit omitted one or more tables in \(file.logicalPath) after 100 tables; content coverage is incomplete.") }
+        for table in tables.prefix(100) {
             try Task.checkCancellation()
             let quoted = "\"\(table.replacingOccurrences(of: "\"", with: "\"\""))\""
-            let columns = try database.rows("PRAGMA table_info(\(quoted))", bindings: []).compactMap { $0.count > 1 ? $0[1] : nil }
+            let columns = try database.rows("PRAGMA table_info(\(quoted))", bindings: []).rows.compactMap { $0.count > 1 ? $0[1] : nil }
             guard !columns.isEmpty else { continue }
+            if remaining == 0 {
+                if !(try database.rows("SELECT 1 FROM \(quoted) LIMIT 1", bindings: []).rows).isEmpty { totalRowBudgetReached = true }
+                continue
+            }
             let limit = min(remaining, 5_000)
-            let rows: [[String?]]
+            let query: (rows: [[String?]], omittedBLOBCells: Int)
             let hasRowID: Bool
-            do { rows = try database.rows("SELECT rowid, * FROM \(quoted) LIMIT ?", bindings: [Int64(limit)]); hasRowID = true }
-            catch { rows = try database.rows("SELECT * FROM \(quoted) LIMIT ?", bindings: [Int64(limit)]); hasRowID = false }
-            for (rowIndex, row) in rows.enumerated() {
+            do { query = try database.rows("SELECT rowid, * FROM \(quoted) LIMIT ?", bindings: [Int64(limit + 1)]); hasRowID = true }
+            catch is CancellationError { throw CancellationError() }
+            catch { query = try database.rows("SELECT * FROM \(quoted) LIMIT ?", bindings: [Int64(limit + 1)]); hasRowID = false }
+            let rows = query.rows
+            omittedBLOBCells += query.omittedBLOBCells
+            if rows.count > limit {
+                if remaining <= 5_000 { totalRowBudgetReached = true }
+                else { perTableLimitReached = true }
+            }
+            for (rowIndex, row) in rows.prefix(limit).enumerated() {
                 try Task.checkCancellation()
                 let values = hasRowID ? Array(row.dropFirst()) : row
                 let recordID = hasRowID ? (row.first ?? nil) ?? String(rowIndex + 1) : String(rowIndex + 1)
                 for (column, value) in zip(columns, values) {
                     guard let value, !value.isEmpty else { continue }
+                    if value.count > 32_768 { truncatedValueCount += 1 }
                     observations.append(EvidenceObservation(artifactType: "sqlite-record", artifactPath: file.logicalPath, sourceFile: file.url.path, observedType: "text", observedValue: String(value.prefix(32_768)), database: file.logicalPath, table: table, recordID: "\(recordID):\(column)", timestamp: nil, acquisitionMethod: method))
                 }
                 remaining -= 1
-                if remaining <= 0 { break }
             }
         }
-        return observations
+        if perTableLimitReached { warnings.append("SQLite per-table row limit omitted rows in \(file.logicalPath) after 5,000 rows per table; content coverage is incomplete.") }
+        if totalRowBudgetReached { warnings.append("SQLite total row budget omitted rows in \(file.logicalPath) after \(maximumRows) rows; content coverage is incomplete.") }
+        if truncatedValueCount > 0 { warnings.append("Truncated \(truncatedValueCount) SQLite value\(truncatedValueCount == 1 ? "" : "s") in \(file.logicalPath) at the 32,768-character safety limit; content coverage is incomplete.") }
+        if omittedBLOBCells > 0 { warnings.append("Omitted \(omittedBLOBCells) SQLite BLOB value\(omittedBLOBCells == 1 ? "" : "s") in \(file.logicalPath); content coverage is incomplete.") }
+        return (observations, warnings)
     }
 
     private static func pathObservations(_ file: SecurityEvidenceFile, method: SecurityAcquisitionMethod) -> [EvidenceObservation] {
@@ -312,17 +439,22 @@ public enum SecurityEvidenceAcquisition {
         }
     }
 
-    private static func flatten(_ value: Any, prefix: String) -> [(String, String)] {
+    private static func flatten(_ value: Any, prefix: String) -> [SecurityTextValue] {
         if let dictionary = value as? [String: Any] {
-            return dictionary.keys.sorted().flatMap { key in flatten(dictionary[key] as Any, prefix: prefix.isEmpty ? key : "\(prefix).\(key)") }
+            return dictionary.sorted { $0.key < $1.key }.flatMap { key, value in
+                flatten(value, prefix: prefix.isEmpty ? key : "\(prefix).\(key)")
+            }
         }
         if let array = value as? [Any] {
             return array.enumerated().flatMap { flatten($0.element, prefix: "\(prefix)[\($0.offset)]") }
         }
-        if let data = value as? Data, data.count <= 4_096 { return [(prefix, data.map { String(format: "%02x", $0) }.joined())] }
+        if let data = value as? Data {
+            if data.count <= 4_096 { return [SecurityTextValue(field: prefix, value: data.map { String(format: "%02x", $0) }.joined(), wasTruncated: false, wasOmittedBinary: false)] }
+            return [SecurityTextValue(field: prefix, value: "[binary data omitted]", wasTruncated: false, wasOmittedBinary: true)]
+        }
         if value is NSNull { return [] }
         let rendered = String(describing: value)
-        return rendered.isEmpty ? [] : [(prefix, String(rendered.prefix(32_768)))]
+        return rendered.isEmpty ? [] : [SecurityTextValue(field: prefix, value: String(rendered.prefix(32_768)), wasTruncated: rendered.count > 32_768, wasOmittedBinary: false)]
     }
 
     private static func hashAlgorithm(_ type: SecurityIndicatorType) -> String? {
@@ -338,8 +470,27 @@ public enum SecurityEvidenceAcquisition {
         (40...64).contains(value.count) && value.allSatisfy(\.isHexDigit)
     }
 
+    private static func validBackupLogicalPath(domain: String, relativePath: String) -> Bool {
+        !domain.isEmpty && !domain.contains("/") && !domain.contains("\0") && domain != "." && domain != ".."
+            && !relativePath.isEmpty && !relativePath.hasPrefix("/") && !relativePath.contains("\0")
+            && !relativePath.split(separator: "/").contains(where: { $0 == "." || $0 == ".." })
+    }
+
     private static func appendWarning(_ warning: String, to warnings: inout [String]) {
         if warnings.count < maximumWarnings { warnings.append(warning) }
         else if warnings.count == maximumWarnings { warnings.append("Additional acquisition warnings were omitted after the 200-warning limit.") }
+    }
+
+    private static func hasNonEmptyWAL(at url: URL) throws -> Bool {
+        var details = stat()
+        if lstat(url.path, &details) == 0 {
+            guard (details.st_mode & S_IFMT) == S_IFREG else {
+                throw ToolkitError.invalidInput("The SQLite WAL companion at \(url.lastPathComponent) must be a regular file, not a symbolic link or special file.")
+            }
+            return details.st_size > 0
+        }
+        let code = errno
+        if code == ENOENT { return false }
+        throw ToolkitError.fileSystem("Could not inspect the SQLite WAL companion.", path: url.path, underlying: POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO))
     }
 }

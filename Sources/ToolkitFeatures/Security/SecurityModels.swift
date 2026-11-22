@@ -371,6 +371,9 @@ public struct SecurityAnalysisReport: Codable, Hashable, Sendable {
         if scannerExecutions.contains(where: { $0.status == .failed }) {
             return "One or more scanners failed; coverage is incomplete and no clean-device conclusion can be drawn."
         }
+        if !acquisitionWarnings.isEmpty {
+            return "Acquisition coverage is incomplete; no known indicators were detected in the analyzed portion, and no clean-device conclusion can be drawn."
+        }
         return "No known indicators were detected in the analyzed coverage; this is not proof that the device is clean."
     }
 }

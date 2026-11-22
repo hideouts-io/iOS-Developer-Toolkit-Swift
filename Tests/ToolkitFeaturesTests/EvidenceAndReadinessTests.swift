@@ -102,7 +102,7 @@ struct EvidenceTests {
         let options = CollectionOptions(durationSeconds: 1, includeClassicSyslog: true, includeUnifiedLogs: false, includePacketCapture: false, includeScreenshot: true, includeCrashReports: true)
         let collector = try EvidenceCollector(device: device, caseFolder: folder, options: options, usbmux: server.client)
         let events = LockedValue<[String]>([])
-        let manifest = await collector.run { event in
+        let manifest = try await collector.run { event in
             if case .stepFinished(let step) = event { events.withLock { $0.append("\(step.id):\(step.status.rawValue)") } }
         }
         #expect(manifest.outcome == .partial, "\(manifest.steps.map { "\($0.id)=\($0.status.rawValue) \($0.detail)" })")
@@ -180,6 +180,29 @@ struct EvidenceTests {
         #expect(manifest.steps[0].attempts == 2)
         #expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent("snapshots/lockdown-info.json.error.txt").path))
         #expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent("SHA256SUMS").path))
+    }
+
+    @Test func stoppingEarlyStillFinalizesAnExplicitPartialCase() async throws {
+        let server = try FakeDeviceServer()
+        try await server.start()
+        defer { Task { await server.stop() } }
+        let root = try SecureFileIO.makeTemporaryDirectory(prefix: "collect-stop")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let device = physicalDevice(server)
+        let folder = try CaseWorkflow.createCaseFolder(in: root, target: device.target)
+        let collector = try EvidenceCollector(device: device, caseFolder: folder, options: CollectionOptions(durationSeconds: 0), usbmux: server.client)
+        await collector.requestStop()
+
+        let manifest = try await collector.run { _ in }
+
+        #expect(manifest.stoppedEarly)
+        #expect(manifest.outcome == .partial)
+        #expect(manifest.steps.first?.status == .succeeded)
+        #expect(manifest.steps.contains { $0.status == .cancelled })
+        let stored = try JSONOutput.decoder().decode(CollectionManifest.self, from: Data(contentsOf: folder.appendingPathComponent(CaseWorkflow.manifestFileName)))
+        #expect(stored.stoppedEarly)
+        #expect(stored.outcome == .partial)
+        #expect(try HashManifest.verify(folder: folder, fileName: "SHA256SUMS").isEmpty)
     }
 
     @Test func rejectsSimulatorsAndInvalidDurations() throws {

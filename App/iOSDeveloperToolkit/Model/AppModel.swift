@@ -6,6 +6,23 @@ import SwiftUI
 import ToolkitCore
 import ToolkitFeatures
 
+/// A finalized case can still have failed identification or incomplete coverage.
+private func evidenceJournalCompletion(_ manifest: CollectionManifest) -> (outcome: OperationOutcome, error: String?) {
+    if manifest.outcome == .failed {
+        return (.failed, "Required device identification did not succeed. Review the finalized manifest before using the retained files.")
+    }
+    if manifest.stoppedEarly {
+        return (.cancelled, "Collection was stopped early. The retained case was finalized with incomplete coverage.")
+    }
+    if manifest.outcome == .partial {
+        let failed = manifest.steps.filter { $0.status == .failed }.count
+        let unavailable = manifest.steps.filter { $0.status == .unavailable }.count
+        let cancelled = manifest.steps.filter { $0.status == .cancelled }.count
+        return (.failed, "The case was finalized with coverage gaps: \(failed) failed, \(unavailable) unavailable and \(cancelled) cancelled steps. Review its manifest before relying on the evidence.")
+    }
+    return (.succeeded, nil)
+}
+
 /// An error ready for an alert: plain message first, technical details on request.
 struct PresentedError: Identifiable, Equatable {
     let id = UUID()
@@ -262,7 +279,12 @@ final class AppModel {
         let finished = Date()
         switch result {
         case .success(let value):
-            record(title: title, workspace: workspace, target: target, transport: transport, argv: argv, started: started, finished: finished, outcome: .succeeded, error: nil, outputPaths: outputPaths)
+            let completion: (outcome: OperationOutcome, error: String?) = (value as? CollectionManifest).map(evidenceJournalCompletion) ?? (.succeeded, nil)
+            record(title: title, workspace: workspace, target: target, transport: transport, argv: argv, started: started, finished: finished, outcome: completion.outcome, error: completion.error, outputPaths: outputPaths)
+            if let failure = completion.error {
+                if completion.outcome == .cancelled { statusMessage = failure }
+                else if presentErrors { present(ToolkitError(.commandFailed, message: failure, recovery: "Review the retained case and its manifest for details.")) }
+            }
             return value
         case .failure(let error):
             let outcome = OperationOutcome.from(error)

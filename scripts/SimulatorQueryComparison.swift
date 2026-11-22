@@ -10,6 +10,13 @@ extension PackageInspectionFixtures {
         var expectedState: String { self == .before ? "Shutdown" : "Booted" }
     }
 
+    enum PostBootOrder: String, Encodable {
+        case swiftFirst = "swift-first"
+        case nativeFirst = "native-first"
+
+        var transports: [String] { self == .swiftFirst ? ["swift", "native"] : ["native", "swift"] }
+    }
+
     struct QueryContext: Codable {
         let environment: [String: String]
         let workingDirectory: String
@@ -53,6 +60,7 @@ extension PackageInspectionFixtures {
     struct ComparisonSummary: Encodable {
         let allocation: String
         let bootOwnershipGateAndBoot: String
+        let declaredPostBootOrder: PostBootOrder
         let controls: [ControlSummary]
         let limits: String
     }
@@ -202,9 +210,13 @@ extension PackageInspectionFixtures {
         let environment = ProcessInfo.processInfo.environment
         let allocation = try comparisonStep("IDT_COMPARE_ALLOCATE", environment: environment)
         let boot = try comparisonStep("IDT_COMPARE_BOOT", environment: environment)
+        guard let orderValue = environment["IDT_COMPARE_POST_BOOT_ORDER"], let order = PostBootOrder(rawValue: orderValue) else {
+            throw failure("The comparison requires an explicit supported post-boot workflow order.", cause: nil)
+        }
         var controls: [ControlSummary] = []
         for stage in [QueryStage.before, .after] {
-            for transport in ["swift", "native"] {
+            let transports = stage == .before ? ["swift", "native"] : order.transports
+            for transport in transports {
                 let name = "\(transport)-\(stage.rawValue)"
                 let step = try comparisonStep("IDT_COMPARE_\(transport.uppercased())_\(stage.rawValue.uppercased())", environment: environment)
                 let prerequisite = allocation != "success" ? "allocationFailed" : stage == .after && boot != "success" ? "bootOwnershipGateOrBootFailed" : "eligible"
@@ -233,8 +245,8 @@ extension PackageInspectionFixtures {
                                                rawOutputState: stdout == nil || stderr == nil ? "unavailable" : "readPrivately"))
             }
         }
-        return ComparisonSummary(allocation: allocation, bootOwnershipGateAndBoot: boot, controls: controls,
-            limits: "Sequential Swift-then-native controls; pipes versus private files. Swift request timeout 60s/grace 3s; native step 1min includes startup and different termination. Missing native footer means elapsed/exit unavailable. Before controls follow allocation discovery; boot has a separate fresh owner gate. Nonreproduction is not a fix; one-path failure alone is not causal proof.")
+        return ComparisonSummary(allocation: allocation, bootOwnershipGateAndBoot: boot, declaredPostBootOrder: order, controls: controls,
+            limits: "Before-boot controls run Swift then native; declared post-boot order is workflow metadata, not observed child-start timing. Verify actual step order and boot-to-step gaps independently from workflow logs and timestamps. Pipes versus private files; Swift request timeout 60s/grace 3s; native step 1min includes startup and different termination. Missing native footer means elapsed/exit unavailable. Before controls follow allocation discovery; boot has a separate fresh owner gate. Nonreproduction is not a fix; one-path failure alone is not causal proof.")
     }
 
     static func comparisonStep(_ key: String, environment: [String: String]) throws -> String {

@@ -269,9 +269,13 @@ jobs:
         run: swift test --filter RealSimulator
 
   simulator-query-comparison:
-    name: Isolated simulator query comparison
+    name: Isolated simulator query comparison (${{ matrix.postboot-order }})
     runs-on: macos-26
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        postboot-order: [swift-first, native-first]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Select Xcode
@@ -312,14 +316,25 @@ jobs:
         id: boot
         if: ${{ always() && steps.allocate.outcome == 'success' }}
         run: '"$RUNNER_TEMP/query-comparison" boot-comparison "$RUNNER_TEMP/query-comparison-data"'
+      - name: Direct native query after boot, first
+        id: native_after_first
+        if: ${{ always() && steps.boot.outcome == 'success' && matrix.postboot-order == 'native-first' }}
+        timeout-minutes: 1
+        run: |
+          set +e
+          python3 scripts/native-simulator-query.py launch "$RUNNER_TEMP/query-comparison-data" after
+          idt_status=$?
+          set -e
+          python3 scripts/native-simulator-query.py finish "$RUNNER_TEMP/query-comparison-data" after "$idt_status"
+          exit "$idt_status"
       - name: Swift query after boot
         id: swift_after
         if: ${{ always() && steps.boot.outcome == 'success' }}
         timeout-minutes: 3
         run: '"$RUNNER_TEMP/query-comparison" query-after "$RUNNER_TEMP/query-comparison-data"'
-      - name: Direct native query after boot
-        id: native_after
-        if: ${{ always() && steps.boot.outcome == 'success' }}
+      - name: Direct native query after boot, last
+        id: native_after_last
+        if: ${{ always() && steps.boot.outcome == 'success' && matrix.postboot-order == 'swift-first' }}
         timeout-minutes: 1
         run: |
           set +e
@@ -336,7 +351,8 @@ jobs:
           IDT_COMPARE_SWIFT_BEFORE: ${{ steps.swift_before.outcome }}
           IDT_COMPARE_NATIVE_BEFORE: ${{ steps.native_before.outcome }}
           IDT_COMPARE_SWIFT_AFTER: ${{ steps.swift_after.outcome }}
-          IDT_COMPARE_NATIVE_AFTER: ${{ steps.native_after.outcome }}
+          IDT_COMPARE_NATIVE_AFTER: ${{ matrix.postboot-order == 'native-first' && steps.native_after_first.outcome || steps.native_after_last.outcome }}
+          IDT_COMPARE_POST_BOOT_ORDER: ${{ matrix.postboot-order }}
         run: |
           if test -d "$RUNNER_TEMP/query-comparison-data"; then
             "$RUNNER_TEMP/query-comparison" report-comparison "$RUNNER_TEMP/query-comparison-data"

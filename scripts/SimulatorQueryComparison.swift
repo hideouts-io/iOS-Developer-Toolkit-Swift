@@ -53,6 +53,7 @@ extension PackageInspectionFixtures {
         let control: String
         let stepOutcome: String
         let prerequisite: String
+        let shellWaitStatus: Int?
         let receipt: QueryReceipt?
         let rawOutputState: String
     }
@@ -223,30 +224,43 @@ extension PackageInspectionFixtures {
                 let stdout = try comparisonFile(directory.appendingPathComponent("\(name).stdout"), maximumBytes: 8 * 1024 * 1024)
                 let stderr = try comparisonFile(directory.appendingPathComponent("\(name).stderr"), maximumBytes: 8 * 1024 * 1024)
                 let terminal = try comparisonFile(directory.appendingPathComponent("\(name).json"), maximumBytes: 65536)
+                let shellWaitStatus: Int?
+                let footer: NativeFooter?
+                if transport == "native" {
+                    let returned = try comparisonFile(directory.appendingPathComponent("\(name).return.json"), maximumBytes: 64)
+                    shellWaitStatus = try returned.map { try JSONDecoder().decode(Int.self, from: $0) }
+                    footer = try terminal.map { try JSONDecoder().decode(NativeFooter.self, from: $0) }
+                    guard shellWaitStatus.map({ (0...255).contains($0) }) ?? true,
+                          footer.map({ $0.elapsedMilliseconds.isFinite && $0.elapsedMilliseconds >= 0 && (0...255).contains($0.shellExitStatus) }) ?? true else {
+                        throw failure("A native comparison return or terminal receipt is invalid.", cause: nil)
+                    }
+                    if let shellWaitStatus, let footer, shellWaitStatus != footer.shellExitStatus {
+                        throw failure("The native comparison shell return and terminal receipt disagree.", cause: nil)
+                    }
+                } else { shellWaitStatus = nil; footer = nil }
                 let receipt: QueryReceipt?
                 if transport == "swift" {
                     receipt = try terminal.map { try JSONDecoder().decode(QueryReceipt.self, from: $0) }
                 } else if let stdout, let stderr {
-                    let footer = try terminal.map { try JSONDecoder().decode(NativeFooter.self, from: $0) }
-                    guard footer.map({ $0.elapsedMilliseconds.isFinite && $0.elapsedMilliseconds >= 0 && (0...255).contains($0.shellExitStatus) }) ?? true else {
-                        throw failure("The native comparison terminal receipt is invalid.", cause: nil)
-                    }
                     var valid = false
                     do {
                         try validateQueryOwner(simulatorRecords(stdout), manifest: manifest, expectedState: stage.expectedState)
                         valid = true
                     } catch { valid = false }
-                    let outcome = footer.map { $0.shellExitStatus == 0 ? (valid ? "succeeded" : "schemaOrOwnerInvalid") : "failed" } ?? "terminalReceiptUnavailable"
+                    let outcome = footer.map { terminal in
+                        shellWaitStatus == nil ? "shellWaitReceiptUnavailable"
+                            : terminal.shellExitStatus == 0 ? (valid ? "succeeded" : "schemaOrOwnerInvalid") : "failed"
+                    } ?? "terminalReceiptUnavailable"
                     receipt = QueryReceipt(outcome: outcome, elapsedMilliseconds: footer?.elapsedMilliseconds,
                                            stdoutBytes: stdout.count, stderrBytes: stderr.count, exitCode: nil, signal: nil,
                                            shellExitStatus: footer?.shellExitStatus, toolkitKind: nil, schemaAndOwnerValid: valid)
                 } else { receipt = nil }
-                controls.append(ControlSummary(control: name, stepOutcome: step, prerequisite: prerequisite, receipt: receipt,
+                controls.append(ControlSummary(control: name, stepOutcome: step, prerequisite: prerequisite, shellWaitStatus: shellWaitStatus, receipt: receipt,
                                                rawOutputState: stdout == nil || stderr == nil ? "unavailable" : "readPrivately"))
             }
         }
         return ComparisonSummary(allocation: allocation, bootOwnershipGateAndBoot: boot, declaredPostBootOrder: order, controls: controls,
-            limits: "Before-boot controls run Swift then native; declared post-boot order is workflow metadata, not observed child-start timing. Verify actual step order and boot-to-step gaps independently from workflow logs and timestamps. Pipes versus private files; Swift request timeout 60s/grace 3s; native step 1min includes startup and different termination. Missing native footer means elapsed/exit unavailable. Before controls follow allocation discovery; boot has a separate fresh owner gate. Nonreproduction is not a fix; one-path failure alone is not causal proof.")
+            limits: "Before-boot controls run Swift then native; declared post-boot order is workflow metadata, not observed child-start timing. Verify actual step order and boot-to-step gaps independently from workflow logs and timestamps. Pipes versus private files; Swift request timeout 60s/grace 3s; native step 1min includes startup and different termination. shellWaitStatus observes the launch invocation return before Python finish; it does not prove exec reached xcrun or identify an exit versus signal. Missing return receipt means unobserved status; missing footer means elapsed unavailable. A failed workflow step remains failed even with status zero and valid JSON. Before controls follow allocation discovery; boot has a separate fresh owner gate. Nonreproduction is not a fix; one-path failure alone is not causal proof.")
     }
 
     static func comparisonStep(_ key: String, environment: [String: String]) throws -> String {

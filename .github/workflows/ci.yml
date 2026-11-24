@@ -310,6 +310,11 @@ jobs:
           python3 scripts/native-simulator-query.py launch "$RUNNER_TEMP/query-comparison-data" before
           idt_status=$?
           set -e
+          umask 077
+          idt_return="$RUNNER_TEMP/query-comparison-data/native-before.return.json"
+          [[ ! -e "$idt_return" && ! -L "$idt_return" ]] || { printf '%s\n' 'Native return receipt already exists.' >&2; exit 1; }
+          set -o noclobber
+          printf '%d\n' "$idt_status" > "$idt_return"
           python3 scripts/native-simulator-query.py finish "$RUNNER_TEMP/query-comparison-data" before "$idt_status"
           exit "$idt_status"
       - name: Fresh exact-owner mutation gate and boot
@@ -325,6 +330,11 @@ jobs:
           python3 scripts/native-simulator-query.py launch "$RUNNER_TEMP/query-comparison-data" after
           idt_status=$?
           set -e
+          umask 077
+          idt_return="$RUNNER_TEMP/query-comparison-data/native-after.return.json"
+          [[ ! -e "$idt_return" && ! -L "$idt_return" ]] || { printf '%s\n' 'Native return receipt already exists.' >&2; exit 1; }
+          set -o noclobber
+          printf '%d\n' "$idt_status" > "$idt_return"
           python3 scripts/native-simulator-query.py finish "$RUNNER_TEMP/query-comparison-data" after "$idt_status"
           exit "$idt_status"
       - name: Swift query after boot
@@ -341,6 +351,11 @@ jobs:
           python3 scripts/native-simulator-query.py launch "$RUNNER_TEMP/query-comparison-data" after
           idt_status=$?
           set -e
+          umask 077
+          idt_return="$RUNNER_TEMP/query-comparison-data/native-after.return.json"
+          [[ ! -e "$idt_return" && ! -L "$idt_return" ]] || { printf '%s\n' 'Native return receipt already exists.' >&2; exit 1; }
+          set -o noclobber
+          printf '%d\n' "$idt_status" > "$idt_return"
           python3 scripts/native-simulator-query.py finish "$RUNNER_TEMP/query-comparison-data" after "$idt_status"
           exit "$idt_status"
       - name: Report bounded controls and remove private raw output
